@@ -1,8 +1,8 @@
 use std::process::ExitCode;
 
 use clap::Parser;
-use commitcrafter::cli::{Cli, Command, ConfigCmd, ConfigShowArgs};
-use commitcrafter::config::{Layered, Loaded, discover, render_json, render_toml};
+use commitcrafter::cli::{Cli, Command, ConfigCmd, ConfigEditArgs, ConfigShowArgs};
+use commitcrafter::config::{Layered, Loaded, discover, edit, render_json, render_toml};
 use commitcrafter::error::Result;
 use commitcrafter::log;
 use tracing::{debug, info};
@@ -25,10 +25,7 @@ fn run() -> Result<()> {
 
     match &cli.command {
         Some(Command::Config(ConfigCmd::Show(args))) => cmd_config_show(&cli, args),
-        Some(Command::Config(ConfigCmd::Edit(_))) => {
-            info!("config edit — not yet implemented");
-            Ok(())
-        }
+        Some(Command::Config(ConfigCmd::Edit(args))) => cmd_config_edit(args),
         None => {
             info!("(default) generate + commit — not yet implemented");
             println!("commitcrafter: (no behavior yet — see issues #11–#70)");
@@ -80,6 +77,12 @@ fn cmd_config_show(cli: &Cli, args: &ConfigShowArgs) -> Result<()> {
         println!();
     }
     Ok(())
+}
+
+/// Open the relevant config file (per-repo or global) in `$EDITOR`,
+/// scaffolding a starter template first if it doesn't exist yet.
+fn cmd_config_edit(args: &ConfigEditArgs) -> Result<()> {
+    edit::run(args)
 }
 
 fn load_layered_for_show(cli: &Cli) -> Result<Loaded> {
