@@ -4,14 +4,14 @@
 //! `[git]`, and `[ui]` blocks from the plan's TOML schema, one Rust
 //! struct per block with sensible defaults.
 //!
-//! This module is the **shape only** — layered merge (global +
-//! per-repo + flags + `--set`) lands in #17. Parsing is deliberately
-//! permissive: missing fields fall back to defaults, but unknown
-//! string values for the validated enums (`format`, `theme`, `color`,
-//! `scope`) are rejected with a key-path-bearing error message, and
-//! unknown TOML keys are collected and logged as warnings (not
-//! errors) so a forward-compatible user config doesn't lock the user
-//! out of an older binary.
+//! This module is the **shape only**. Layered merge across defaults,
+//! global, per-repo, CLI flags, and `--set` lives in
+//! [`crate::config::merge`]; XDG and `git rev-parse` discovery lives in
+//! [`crate::config::discover`]. Parsing is deliberately permissive:
+//! missing fields fall back to defaults, unknown enum values fail with
+//! a key-path error message, and unknown TOML keys are collected and
+//! logged as warnings (not errors) so a forward-compatible user config
+//! never locks an older binary out.
 
 use serde::{Deserialize, Serialize};
 
