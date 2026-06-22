@@ -38,6 +38,7 @@
 pub mod discover;
 pub mod merge;
 pub mod schema;
+pub mod set_override;
 pub mod source;
 
 pub use merge::{Layered, Loaded};
@@ -46,4 +47,5 @@ pub use schema::{
     MessageFormat, OllamaConfig, OpenAiConfig, OpenRouterConfig, ProviderSelection, Providers,
     Style, ThemeName, Ui, find_unknown_keys,
 };
+pub use set_override::parse_arg as parse_set_arg;
 pub use source::{Source, Sources};

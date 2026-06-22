@@ -388,7 +388,7 @@ fn walk(table: &toml::Table, prefix: &str, out: &mut Vec<String>) {
 /// for `binary_search`. Drift is caught by `default_round_trips` —
 /// `Config::default()` must serialize to a document whose every key is
 /// in this list.
-const KNOWN_KEYS: &[&str] = &[
+pub(crate) const KNOWN_KEYS: &[&str] = &[
     "git",
     "git.auto_unstage_on_abort",
     "git.ignore_paths",

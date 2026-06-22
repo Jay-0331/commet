@@ -20,7 +20,8 @@ use std::path::{Path, PathBuf};
 
 use crate::error::{Error, Result};
 
-use super::schema::{Config, find_unknown_keys};
+use super::schema::{Config, KNOWN_KEYS, find_unknown_keys};
+use super::set_override;
 use super::source::{Source, Sources};
 
 /// Builder for a layered config load. See the module-level docs for
@@ -91,6 +92,14 @@ impl Layered {
         self
     }
 
+    /// Parse one `--set` CLI argument (`key.path=value`) and push it
+    /// onto the set layer. Returns the same builder for chaining.
+    pub fn with_set_arg(mut self, arg: &str) -> Result<Self> {
+        let (path, value) = set_override::parse_arg(arg)?;
+        self.sets.push((path, value));
+        Ok(self)
+    }
+
     /// Perform the merge and deserialize into a typed [`Config`].
     pub fn load(self) -> Result<Loaded> {
         // Defaults: serialize Config::default() to TOML and seed
@@ -133,6 +142,20 @@ impl Layered {
         if let Some(value) = self.flag {
             merge_into(&mut acc, &value, &Source::Flag, &mut sources, "");
         }
+        // Validate every --set path: syntactic shape first (empty
+        // path, empty segments), then membership in `KNOWN_KEYS`.
+        // Catches typos like `style.subjct_max_len=50` and points at
+        // the closest legitimate key.
+        for (path, _) in &self.sets {
+            validate_set_path_syntax(path)?;
+            if !KNOWN_KEYS.contains(&path.as_str()) {
+                return Err(Error::Config(format!(
+                    "unknown --set path `{path}`{}",
+                    close_match_hint(path),
+                )));
+            }
+        }
+
         for (path, value) in self.sets {
             apply_set(&mut acc, &path, value, &mut sources)?;
         }
@@ -140,6 +163,58 @@ impl Layered {
         let config: Config = acc.try_into().map_err(|e| Error::Config(e.to_string()))?;
         Ok(Loaded { config, sources })
     }
+}
+
+/// Build a "did you mean: ..." hint for an unknown --set path.
+///
+/// Returns either an empty string (no close match) or `\n  did you
+/// mean: a, b, c?` listing up to three closest schema keys.
+fn close_match_hint(unknown: &str) -> String {
+    const MAX_DISTANCE: usize = 4;
+    const MAX_SUGGESTIONS: usize = 3;
+
+    let mut scored: Vec<(usize, &&str)> = KNOWN_KEYS
+        .iter()
+        .map(|k| (levenshtein(k, unknown), k))
+        .filter(|(d, _)| *d <= MAX_DISTANCE)
+        .collect();
+    if scored.is_empty() {
+        return String::new();
+    }
+    scored.sort_by_key(|(d, _)| *d);
+
+    let suggestions: Vec<&str> = scored
+        .iter()
+        .take(MAX_SUGGESTIONS)
+        .map(|(_, k)| **k)
+        .collect();
+
+    format!("\n  did you mean: {}?", suggestions.join(", "))
+}
+
+/// Iterative Levenshtein distance — small, allocator-light, no deps.
+fn levenshtein(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let m = a.len();
+    let n = b.len();
+    if m == 0 {
+        return n;
+    }
+    if n == 0 {
+        return m;
+    }
+    let mut prev: Vec<usize> = (0..=n).collect();
+    let mut curr: Vec<usize> = vec![0; n + 1];
+    for i in 1..=m {
+        curr[0] = i;
+        for j in 1..=n {
+            let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
+            curr[j] = (prev[j] + 1).min(curr[j - 1] + 1).min(prev[j - 1] + cost);
+        }
+        std::mem::swap(&mut prev, &mut curr);
+    }
+    prev[n]
 }
 
 /// Read a TOML file from disk and parse it.
@@ -213,22 +288,30 @@ fn merge_into(
     }
 }
 
+/// Syntactic check for a `--set` path (no schema knowledge).
+fn validate_set_path_syntax(path: &str) -> Result<()> {
+    if path.is_empty() {
+        return Err(Error::Config("empty --set path".into()));
+    }
+    if path.split('.').any(|p| p.is_empty()) {
+        return Err(Error::Config(format!(
+            "invalid --set path `{path}` (empty segment)"
+        )));
+    }
+    Ok(())
+}
+
 /// Apply a `--set <dotted.path>=<value>` override.
+///
+/// Caller must have already validated `path` via
+/// [`validate_set_path_syntax`] and confirmed it is in `KNOWN_KEYS`.
 fn apply_set(
     acc: &mut toml::Value,
     path: &str,
     value: toml::Value,
     sources: &mut Sources,
 ) -> Result<()> {
-    if path.is_empty() {
-        return Err(Error::Config("empty --set path".into()));
-    }
     let parts: Vec<&str> = path.split('.').collect();
-    if parts.iter().any(|p| p.is_empty()) {
-        return Err(Error::Config(format!(
-            "invalid --set path `{path}` (empty segment)"
-        )));
-    }
 
     // Walk to the parent of the final segment, creating tables as we go.
     let mut current: &mut toml::Value = acc;
@@ -247,7 +330,9 @@ fn apply_set(
     let tbl = current
         .as_table_mut()
         .ok_or_else(|| Error::Config(format!("parent of --set `{path}` is not a table")))?;
-    let last = *parts.last().expect("non-empty by check above");
+    let last = *parts
+        .last()
+        .expect("non-empty after validate_set_path_syntax");
     tbl.insert(last.to_string(), value.clone());
 
     // Source tracking: the leaf itself is always `Source::Set`. If the
@@ -423,14 +508,7 @@ mod tests {
     }
 
     #[test]
-    fn set_into_unknown_path_creates_intermediate_tables() {
-        // `[experimental]` doesn't exist in the schema, but --set
-        // should still write through; the final deserialize will
-        // succeed because Config::default ignores unknown top-level
-        // keys when... actually no: serde(default) on Config doesn't
-        // help here because the top-level deserialize doesn't allow
-        // unknown root keys. So this test focuses on PATHS THAT DO
-        // exist in the schema but require traversal.
+    fn set_into_deeply_nested_known_path() {
         let loaded = Layered::new()
             .with_set(
                 "providers.openrouter.x_title",
@@ -439,6 +517,90 @@ mod tests {
             .load()
             .unwrap();
         assert_eq!(loaded.config.providers.openrouter.x_title, "my-tool");
+        assert_eq!(
+            loaded.sources.get("providers.openrouter.x_title"),
+            Some(&Source::Set),
+        );
+    }
+
+    #[test]
+    fn unknown_set_path_errors_with_close_match_suggestion() {
+        // `subjct_max_len` is a one-character typo of `subject_max_len`.
+        let err = Layered::new()
+            .with_set("style.subjct_max_len", toml::Value::Integer(50))
+            .load()
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("unknown --set path"),
+            "expected unknown-path error, got: {msg}",
+        );
+        assert!(
+            msg.contains("style.subject_max_len"),
+            "expected close-match suggestion, got: {msg}",
+        );
+    }
+
+    #[test]
+    fn unknown_set_path_with_no_close_match_omits_suggestion_block() {
+        let err = Layered::new()
+            .with_set("xyz123.totally.wrong", toml::Value::Integer(1))
+            .load()
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("unknown --set path"));
+        // No suggestion line — distance to any KNOWN_KEY is greater than the threshold.
+        assert!(
+            !msg.contains("did you mean"),
+            "did-you-mean shouldn't fire for distant strings, got: {msg}",
+        );
+    }
+
+    #[test]
+    fn with_set_arg_parses_and_pushes() {
+        let loaded = Layered::new()
+            .with_set_arg("style.subject_max_len=80")
+            .unwrap()
+            .load()
+            .unwrap();
+        assert_eq!(loaded.config.style.subject_max_len, 80);
+        assert_eq!(
+            loaded.sources.get("style.subject_max_len"),
+            Some(&Source::Set),
+        );
+    }
+
+    #[test]
+    fn with_set_arg_supports_bare_string_value() {
+        let loaded = Layered::new()
+            .with_set_arg("providers.openrouter.model=meta-llama/llama-3.1-70b-instruct")
+            .unwrap()
+            .load()
+            .unwrap();
+        assert_eq!(
+            loaded.config.providers.openrouter.model,
+            "meta-llama/llama-3.1-70b-instruct",
+        );
+    }
+
+    #[test]
+    fn with_set_arg_propagates_parse_errors() {
+        let err = Layered::new().with_set_arg("no-equals-here").unwrap_err();
+        assert!(matches!(err, Error::Config(msg) if msg.contains("key.path=value")));
+    }
+
+    #[test]
+    fn levenshtein_basic_cases() {
+        assert_eq!(levenshtein("", ""), 0);
+        assert_eq!(levenshtein("kitten", "sitting"), 3);
+        assert_eq!(levenshtein("abc", "abc"), 0);
+        assert_eq!(levenshtein("abc", ""), 3);
+        assert_eq!(levenshtein("", "abc"), 3);
+        // One insert (the `e` in `subject`) — distance 1.
+        assert_eq!(
+            levenshtein("style.subjct_max_len", "style.subject_max_len"),
+            1,
+        );
     }
 
     #[test]
