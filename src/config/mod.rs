@@ -36,6 +36,7 @@
 //! ```
 
 pub mod discover;
+pub mod edit;
 pub mod merge;
 pub mod schema;
 pub mod set_override;
