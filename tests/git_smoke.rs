@@ -89,8 +89,10 @@ fn status_porcelain_picks_up_untracked_and_modified_files() {
     write(&root, "notes.md", "untracked\n");
 
     let entries = git::status_porcelain(&root).unwrap();
-    let by_path: std::collections::HashMap<_, _> =
-        entries.iter().map(|e| (e.path.clone(), e.status)).collect();
+    let by_path: std::collections::HashMap<_, _> = entries
+        .iter()
+        .map(|e| (e.path.clone(), e.status.clone()))
+        .collect();
 
     assert_eq!(
         by_path.get(&PathBuf::from("seed.txt")),
@@ -100,6 +102,45 @@ fn status_porcelain_picks_up_untracked_and_modified_files() {
         by_path.get(&PathBuf::from("notes.md")),
         Some(&FileStatus::Untracked),
     );
+}
+
+#[test]
+fn status_porcelain_surfaces_rename_with_both_paths() {
+    let (_tmp, root) = make_repo();
+    make_initial_commit(&root);
+
+    // Track an additional file so we have something to rename.
+    write(&root, "before.rs", "// will be renamed\n");
+    git::add(&root, &[Path::new("before.rs")]).unwrap();
+    let msg_path = root.join(".cc-msg");
+    std::fs::write(&msg_path, "add before.rs\n").unwrap();
+    git::commit(&root, &msg_path, /*no_verify=*/ false).unwrap();
+    std::fs::remove_file(&msg_path).ok();
+
+    // Now rename it and observe the porcelain output.
+    let mv = Command::new("git")
+        .current_dir(&root)
+        .args(["mv", "before.rs", "after.rs"])
+        .status()
+        .unwrap();
+    assert!(mv.success(), "git mv failed");
+
+    let entries = git::status_porcelain(&root).unwrap();
+    let rename = entries
+        .iter()
+        .find(|e| matches!(e.status, commitcrafter::git::FileStatus::Renamed { .. }))
+        .expect("rename entry present in status output");
+
+    match &rename.status {
+        commitcrafter::git::FileStatus::Renamed { from, to } => {
+            assert_eq!(from, &PathBuf::from("before.rs"));
+            assert_eq!(to, &PathBuf::from("after.rs"));
+        }
+        other => panic!("expected Renamed, got {other:?}"),
+    }
+    // The primary `path` matches the new location, matching what git
+    // prints first in porcelain output.
+    assert_eq!(rename.path, PathBuf::from("after.rs"));
 }
 
 #[test]
