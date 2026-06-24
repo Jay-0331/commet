@@ -261,6 +261,11 @@ pub enum LearningScope {
 pub struct Git {
     pub auto_unstage_on_abort: bool,
     pub ignore_paths: Vec<String>,
+    /// Maximum byte size of the diff sent to the LLM. When the staged
+    /// diff exceeds this, the truncation pipeline drops ignored
+    /// paths first, then the largest remaining files, then truncates
+    /// the tail of the diff with a clear marker. Default 100 KiB.
+    pub diff_max_bytes: u64,
 }
 
 impl Default for Git {
@@ -272,6 +277,7 @@ impl Default for Git {
                 "*.lock".into(),
                 "dist/**".into(),
             ],
+            diff_max_bytes: 100 * 1024,
         }
     }
 }
@@ -391,6 +397,7 @@ fn walk(table: &toml::Table, prefix: &str, out: &mut Vec<String>) {
 pub(crate) const KNOWN_KEYS: &[&str] = &[
     "git",
     "git.auto_unstage_on_abort",
+    "git.diff_max_bytes",
     "git.ignore_paths",
     "learning",
     "learning.enabled",

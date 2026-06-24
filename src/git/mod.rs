@@ -13,8 +13,10 @@
 //! Porcelain parsing lives in [`status`]; the bare process plumbing
 //! lives in [`wrappers`].
 
+pub mod diff;
 pub mod status;
 pub mod wrappers;
 
+pub use diff::{DiffChunk, header_summary, parse_chunks, truncate as truncate_diff};
 pub use status::{FileEntry, FileStatus, parse_porcelain, status_porcelain};
 pub use wrappers::{add, commit, diff_staged, repo_root, restore_staged};
