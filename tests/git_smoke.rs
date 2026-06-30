@@ -247,3 +247,147 @@ fn diff_staged_of_clean_repo_is_empty() {
     make_initial_commit(&root);
     assert!(git::diff_staged(&root).unwrap().is_empty());
 }
+
+// ---------- StageTracker (#25) ----------
+
+#[test]
+fn stage_tracker_unstages_on_drop_when_enabled() {
+    use commitcrafter::git::StageTracker;
+
+    let (_tmp, root) = make_repo();
+    make_initial_commit(&root);
+    write(&root, "new.rs", "fn new() {}\n");
+
+    {
+        let mut tracker = StageTracker::new(root.clone(), /*enabled=*/ true);
+        tracker.stage(&[Path::new("new.rs")]).unwrap();
+        let staged = git::diff_staged(&root).unwrap();
+        assert!(staged.contains("new.rs"), "stage didn't actually stage");
+        // tracker goes out of scope here
+    }
+
+    let staged_after = git::diff_staged(&root).unwrap();
+    assert!(
+        !staged_after.contains("new.rs"),
+        "Drop didn't auto-unstage: {staged_after}",
+    );
+}
+
+#[test]
+fn stage_tracker_release_disarms_drop() {
+    use commitcrafter::git::StageTracker;
+
+    let (_tmp, root) = make_repo();
+    make_initial_commit(&root);
+    write(&root, "keep_staged.rs", "// stays\n");
+
+    {
+        let mut tracker = StageTracker::new(root.clone(), true);
+        tracker.stage(&[Path::new("keep_staged.rs")]).unwrap();
+        tracker.release();
+    }
+
+    // Released → Drop should be a no-op.
+    let staged = git::diff_staged(&root).unwrap();
+    assert!(
+        staged.contains("keep_staged.rs"),
+        "release should leave the staged path alone: {staged}",
+    );
+}
+
+#[test]
+fn stage_tracker_explicit_abort_restores_paths() {
+    use commitcrafter::git::StageTracker;
+
+    let (_tmp, root) = make_repo();
+    make_initial_commit(&root);
+    write(&root, "a.rs", "// a\n");
+    write(&root, "b.rs", "// b\n");
+
+    let mut tracker = StageTracker::new(root.clone(), true);
+    tracker
+        .stage(&[Path::new("a.rs"), Path::new("b.rs")])
+        .unwrap();
+    assert_eq!(tracker.tracked_len(), 2);
+
+    tracker.abort().unwrap();
+
+    let staged = git::diff_staged(&root).unwrap();
+    assert!(!staged.contains("a.rs"));
+    assert!(!staged.contains("b.rs"));
+}
+
+#[test]
+fn stage_tracker_disabled_does_not_unstage_on_drop() {
+    use commitcrafter::git::StageTracker;
+
+    let (_tmp, root) = make_repo();
+    make_initial_commit(&root);
+    write(&root, "left_alone.rs", "// stays\n");
+
+    {
+        let mut tracker = StageTracker::new(root.clone(), /*enabled=*/ false);
+        tracker.stage(&[Path::new("left_alone.rs")]).unwrap();
+        // dropped here
+    }
+
+    let staged = git::diff_staged(&root).unwrap();
+    assert!(
+        staged.contains("left_alone.rs"),
+        "enabled=false should leave path staged: {staged}",
+    );
+}
+
+#[test]
+fn stage_tracker_unstages_on_panic_unwind() {
+    use std::panic;
+
+    use commitcrafter::git::StageTracker;
+
+    let (_tmp, root) = make_repo();
+    make_initial_commit(&root);
+    write(&root, "panic.rs", "// panic\n");
+
+    let root_for_panic = root.clone();
+    let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+        let mut tracker = StageTracker::new(root_for_panic, true);
+        tracker.stage(&[Path::new("panic.rs")]).unwrap();
+        panic!("simulated abort");
+    }));
+
+    assert!(result.is_err(), "panic should have propagated");
+    let staged = git::diff_staged(&root).unwrap();
+    assert!(
+        !staged.contains("panic.rs"),
+        "panic unwind should have triggered Drop + auto-unstage: {staged}",
+    );
+}
+
+#[test]
+fn stage_tracker_only_unstages_paths_it_staged() {
+    use commitcrafter::git::StageTracker;
+
+    let (_tmp, root) = make_repo();
+    make_initial_commit(&root);
+
+    // User staged this themselves BEFORE cc ran.
+    write(&root, "preexisting.rs", "// user staged\n");
+    git::add(&root, &[Path::new("preexisting.rs")]).unwrap();
+
+    // cc stages an additional path via the tracker.
+    write(&root, "cc_added.rs", "// cc staged\n");
+    {
+        let mut tracker = StageTracker::new(root.clone(), true);
+        tracker.stage(&[Path::new("cc_added.rs")]).unwrap();
+    }
+
+    let staged = git::diff_staged(&root).unwrap();
+    assert!(
+        staged.contains("preexisting.rs"),
+        "user-staged path should survive tracker drop: {staged}",
+    );
+    assert!(
+        !staged.contains("cc_added.rs"),
+        "cc-staged path should be auto-unstaged: {staged}",
+    );
+}
