@@ -164,6 +164,67 @@ fn build_globs(patterns: &[String]) -> Result<GlobSet> {
         .map_err(|e| Error::Git(format!("failed to compile ignore_paths globset: {e}")))
 }
 
+/// Partition `chunks` into the kept set + count/size of dropped
+/// entries, using the given `GlobSet` to test paths.
+///
+/// Shared by [`filter`] (unconditional strip) and [`truncate`]
+/// (stage 1 of the size-cap pipeline).
+fn drop_matching(chunks: Vec<DiffChunk>, globs: &GlobSet) -> (Vec<DiffChunk>, usize, usize) {
+    let mut dropped_files = 0;
+    let mut dropped_bytes = 0;
+    let kept: Vec<DiffChunk> = chunks
+        .into_iter()
+        .filter(|c| {
+            if globs.is_match(&c.path) {
+                dropped_files += 1;
+                dropped_bytes += c.byte_len();
+                false
+            } else {
+                true
+            }
+        })
+        .collect();
+    (kept, dropped_files, dropped_bytes)
+}
+
+/// Unconditionally strip diff chunks whose path matches one of
+/// `ignore_globs`, returning the joined remaining diff text.
+///
+/// Unlike [`truncate`], this applies *no size cap* — callers use it
+/// to honor the always-strip behavior of `-x / --exclude` +
+/// `[git].ignore_paths`, regardless of whether the diff would
+/// otherwise fit in the LLM context.
+///
+/// Staging is untouched — this only filters the **string** sent to
+/// the model. The dropped paths remain in the git index.
+pub fn filter(diff: &str, ignore_globs: &[String]) -> Result<String> {
+    let chunks = parse_chunks(diff);
+    let globs = build_globs(ignore_globs)?;
+    let (kept, _, _) = drop_matching(chunks, &globs);
+    Ok(kept.iter().map(|c| c.text.as_str()).collect())
+}
+
+/// Merge CLI `-x / --exclude` arguments with `[git].ignore_paths`
+/// from config into a single de-duplicated list.
+///
+/// Config patterns appear first (so they form the "base set" the
+/// user is layering CLI overrides onto). Order within each side is
+/// preserved. Duplicates are detected by exact string match.
+pub fn merge_ignore_globs(cli_excludes: &[String], config_ignore: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::with_capacity(cli_excludes.len() + config_ignore.len());
+    for pat in config_ignore {
+        if !out.contains(pat) {
+            out.push(pat.clone());
+        }
+    }
+    for pat in cli_excludes {
+        if !out.contains(pat) {
+            out.push(pat.clone());
+        }
+    }
+    out
+}
+
 /// Run the full truncation pipeline.
 ///
 /// Returns the (possibly shrunken) diff string with the header
@@ -179,23 +240,13 @@ pub fn truncate(
 ) -> Result<String> {
     let header = header_summary(entries);
 
-    let mut chunks = parse_chunks(diff);
+    let raw_chunks = parse_chunks(diff);
     let globs = build_globs(ignore_globs)?;
 
-    let initial_total: usize = chunks.iter().map(DiffChunk::byte_len).sum();
+    let initial_total: usize = raw_chunks.iter().map(DiffChunk::byte_len).sum();
 
     // Stage 1: drop ignored paths.
-    let mut dropped_files = 0usize;
-    let mut dropped_bytes = 0usize;
-    chunks.retain(|c| {
-        if globs.is_match(&c.path) {
-            dropped_files += 1;
-            dropped_bytes += c.byte_len();
-            false
-        } else {
-            true
-        }
-    });
+    let (mut chunks, mut dropped_files, mut dropped_bytes) = drop_matching(raw_chunks, &globs);
 
     // Stage 2: drop largest until under budget. Always keep at
     // least one chunk so stage 3 can truncate its tail rather than
@@ -451,5 +502,114 @@ mod tests {
         let cap = byte_floor_char_boundary(s, 2);
         assert!(s.is_char_boundary(cap));
         assert_eq!(&s[..cap], "h");
+    }
+
+    // ---------- filter (#24) ----------
+
+    #[test]
+    fn filter_strips_matching_path_keeps_others() {
+        let diff = diff_for("src/main.rs", 100) + &diff_for("package-lock.json", 50_000);
+        let out = filter(
+            &diff,
+            &["*.lock".to_string(), "package-lock.json".to_string()],
+        )
+        .unwrap();
+        assert!(
+            out.contains("a/src/main.rs"),
+            "main.rs missing from filtered diff"
+        );
+        assert!(
+            !out.contains("a/package-lock.json"),
+            "lockfile should be stripped:\n{out}",
+        );
+    }
+
+    #[test]
+    fn filter_no_globs_returns_full_diff() {
+        let diff = diff_for("src/main.rs", 100);
+        let out = filter(&diff, &[]).unwrap();
+        assert_eq!(out, diff);
+    }
+
+    #[test]
+    fn filter_empty_diff_returns_empty_string() {
+        let out = filter("", &["*.lock".to_string()]).unwrap();
+        assert_eq!(out, "");
+    }
+
+    #[test]
+    fn filter_does_not_apply_size_cap() {
+        // 1 MB single chunk; no glob matches; filter must not truncate.
+        let diff = diff_for("huge.rs", 1_000_000);
+        let out = filter(&diff, &["*.lock".to_string()]).unwrap();
+        // Output is roughly the size of the input — no truncation marker.
+        assert!(out.len() > 900_000, "filter shrunk diff unexpectedly");
+        assert!(!out.contains("truncated"));
+    }
+
+    #[test]
+    fn filter_invalid_glob_surfaces_error() {
+        let diff = diff_for("a.rs", 10);
+        let err = filter(&diff, &["[invalid".to_string()]).unwrap_err();
+        assert!(matches!(err, Error::Git(msg) if msg.contains("invalid ignore_paths glob")));
+    }
+
+    #[test]
+    fn filter_preserves_concatenation_order() {
+        // Three files in order; strip middle one; surviving order
+        // must match input order.
+        let diff = diff_for("first.rs", 5) + &diff_for("middle.lock", 5) + &diff_for("last.rs", 5);
+        let out = filter(&diff, &["*.lock".to_string()]).unwrap();
+        let first_idx = out.find("first.rs").expect("first present");
+        let last_idx = out.find("last.rs").expect("last present");
+        assert!(first_idx < last_idx, "order not preserved");
+        assert!(!out.contains("middle.lock"));
+    }
+
+    // ---------- merge_ignore_globs (#24) ----------
+
+    #[test]
+    fn merge_ignore_globs_concats_config_then_cli() {
+        let cli = vec!["*.tmp".to_string(), "secrets.env".to_string()];
+        let config = vec!["*.lock".to_string(), "dist/**".to_string()];
+        let merged = merge_ignore_globs(&cli, &config);
+        // Config first, then CLI.
+        assert_eq!(
+            merged,
+            vec![
+                "*.lock".to_string(),
+                "dist/**".to_string(),
+                "*.tmp".to_string(),
+                "secrets.env".to_string(),
+            ],
+        );
+    }
+
+    #[test]
+    fn merge_ignore_globs_dedupes_exact_string_matches() {
+        let cli = vec!["*.lock".to_string(), "*.tmp".to_string()];
+        let config = vec!["*.lock".to_string()];
+        let merged = merge_ignore_globs(&cli, &config);
+        assert_eq!(merged, vec!["*.lock".to_string(), "*.tmp".to_string()]);
+    }
+
+    #[test]
+    fn merge_ignore_globs_both_empty_yields_empty() {
+        let merged: Vec<String> = merge_ignore_globs(&[], &[]);
+        assert!(merged.is_empty());
+    }
+
+    #[test]
+    fn merge_ignore_globs_only_cli() {
+        let cli = vec!["*.tmp".to_string()];
+        let merged = merge_ignore_globs(&cli, &[]);
+        assert_eq!(merged, vec!["*.tmp".to_string()]);
+    }
+
+    #[test]
+    fn merge_ignore_globs_only_config() {
+        let config = vec!["*.lock".to_string()];
+        let merged = merge_ignore_globs(&[], &config);
+        assert_eq!(merged, vec!["*.lock".to_string()]);
     }
 }

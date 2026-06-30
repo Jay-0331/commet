@@ -17,6 +17,9 @@ pub mod diff;
 pub mod status;
 pub mod wrappers;
 
-pub use diff::{DiffChunk, header_summary, parse_chunks, truncate as truncate_diff};
+pub use diff::{
+    DiffChunk, filter as filter_diff, header_summary, merge_ignore_globs, parse_chunks,
+    truncate as truncate_diff,
+};
 pub use status::{FileEntry, FileStatus, parse_porcelain, status_porcelain};
 pub use wrappers::{add, commit, diff_staged, repo_root, restore_staged};
