@@ -12,6 +12,9 @@ use thiserror::Error;
 mod base;
 pub use base::HttpClient;
 
+mod openai_compat;
+pub use openai_compat::{ChatMessage, ChatRequest, complete};
+
 /// Input to a single generation call. `n > 1` asks the adapter for that
 /// many independent candidate messages from the same diff.
 #[derive(Debug, Clone)]
