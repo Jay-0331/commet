@@ -9,6 +9,9 @@ use std::time::Duration;
 
 use thiserror::Error;
 
+mod base;
+pub use base::HttpClient;
+
 /// Input to a single generation call. `n > 1` asks the adapter for that
 /// many independent candidate messages from the same diff.
 #[derive(Debug, Clone)]
