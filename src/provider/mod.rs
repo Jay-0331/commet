@@ -15,6 +15,9 @@ pub use base::HttpClient;
 mod openai_compat;
 pub use openai_compat::{ChatMessage, ChatRequest, complete};
 
+mod openai;
+pub use openai::OpenAiProvider;
+
 /// Input to a single generation call. `n > 1` asks the adapter for that
 /// many independent candidate messages from the same diff.
 #[derive(Debug, Clone)]
@@ -87,22 +90,6 @@ impl Provider for AnthropicProvider {
     }
 }
 
-pub struct OpenAiProvider;
-
-impl Provider for OpenAiProvider {
-    fn name(&self) -> &'static str {
-        "openai"
-    }
-
-    fn key_env_var(&self) -> Option<&'static str> {
-        Some("OPENAI_API_KEY")
-    }
-
-    fn generate(&self, _req: &GenerateRequest) -> Result<Vec<String>, ProviderError> {
-        unimplemented!("OpenAI adapter lands in a follow-up issue")
-    }
-}
-
 pub struct OpenRouterProvider;
 
 impl Provider for OpenRouterProvider {
@@ -139,7 +126,7 @@ impl Provider for OllamaProvider {
 pub fn registry() -> HashMap<&'static str, Box<dyn Provider>> {
     let providers: Vec<Box<dyn Provider>> = vec![
         Box::new(AnthropicProvider),
-        Box::new(OpenAiProvider),
+        Box::new(OpenAiProvider::new()),
         Box::new(OpenRouterProvider),
         Box::new(OllamaProvider),
     ];
