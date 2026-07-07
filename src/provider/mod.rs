@@ -24,6 +24,9 @@ pub use openrouter::OpenRouterProvider;
 mod anthropic;
 pub use anthropic::AnthropicProvider;
 
+mod ollama;
+pub use ollama::OllamaProvider;
+
 /// Input to a single generation call. `n > 1` asks the adapter for that
 /// many independent candidate messages from the same diff.
 #[derive(Debug, Clone)]
@@ -80,29 +83,13 @@ pub trait Provider: Send + Sync {
     fn generate(&self, req: &GenerateRequest) -> Result<Vec<String>, ProviderError>;
 }
 
-pub struct OllamaProvider;
-
-impl Provider for OllamaProvider {
-    fn name(&self) -> &'static str {
-        "ollama"
-    }
-
-    fn key_env_var(&self) -> Option<&'static str> {
-        None
-    }
-
-    fn generate(&self, _req: &GenerateRequest) -> Result<Vec<String>, ProviderError> {
-        unimplemented!("Ollama adapter lands in a follow-up issue")
-    }
-}
-
 /// The four builtin providers, keyed by [`Provider::name`].
 pub fn registry() -> HashMap<&'static str, Box<dyn Provider>> {
     let providers: Vec<Box<dyn Provider>> = vec![
         Box::new(AnthropicProvider::new()),
         Box::new(OpenAiProvider::new()),
         Box::new(OpenRouterProvider::new()),
-        Box::new(OllamaProvider),
+        Box::new(OllamaProvider::new()),
     ];
     providers.into_iter().map(|p| (p.name(), p)).collect()
 }
