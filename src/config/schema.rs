@@ -73,6 +73,12 @@ impl Default for ProviderSelection {
 
 // ---------- [providers.*] ----------
 
+/// Default per-request timeout for every provider's HTTP client.
+const DEFAULT_TIMEOUT_SECS: u64 = 60;
+
+/// Default retry budget for 429 / 5xx / transport failures.
+const DEFAULT_MAX_RETRIES: u8 = 2;
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Providers {
@@ -88,6 +94,8 @@ pub struct AnthropicConfig {
     pub model: String,
     pub max_tokens: u32,
     pub temperature: f32,
+    pub timeout_secs: u64,
+    pub max_retries: u8,
 }
 
 impl Default for AnthropicConfig {
@@ -96,6 +104,8 @@ impl Default for AnthropicConfig {
             model: "claude-sonnet-4-6".into(),
             max_tokens: 1024,
             temperature: 0.2,
+            timeout_secs: DEFAULT_TIMEOUT_SECS,
+            max_retries: DEFAULT_MAX_RETRIES,
         }
     }
 }
@@ -106,6 +116,8 @@ pub struct OpenAiConfig {
     pub model: String,
     pub max_tokens: u32,
     pub temperature: f32,
+    pub timeout_secs: u64,
+    pub max_retries: u8,
 }
 
 impl Default for OpenAiConfig {
@@ -114,6 +126,8 @@ impl Default for OpenAiConfig {
             model: "gpt-4o-mini".into(),
             max_tokens: 1024,
             temperature: 0.2,
+            timeout_secs: DEFAULT_TIMEOUT_SECS,
+            max_retries: DEFAULT_MAX_RETRIES,
         }
     }
 }
@@ -127,6 +141,8 @@ pub struct OpenRouterConfig {
     pub temperature: f32,
     pub http_referer: String,
     pub x_title: String,
+    pub timeout_secs: u64,
+    pub max_retries: u8,
 }
 
 impl Default for OpenRouterConfig {
@@ -138,6 +154,8 @@ impl Default for OpenRouterConfig {
             temperature: 0.2,
             http_referer: String::new(),
             x_title: "commitcrafter".into(),
+            timeout_secs: DEFAULT_TIMEOUT_SECS,
+            max_retries: DEFAULT_MAX_RETRIES,
         }
     }
 }
@@ -147,6 +165,8 @@ impl Default for OpenRouterConfig {
 pub struct OllamaConfig {
     pub endpoint: String,
     pub model: String,
+    pub timeout_secs: u64,
+    pub max_retries: u8,
 }
 
 impl Default for OllamaConfig {
@@ -154,6 +174,8 @@ impl Default for OllamaConfig {
         Self {
             endpoint: "http://localhost:11434".into(),
             model: "llama3.1:8b".into(),
+            timeout_secs: DEFAULT_TIMEOUT_SECS,
+            max_retries: DEFAULT_MAX_RETRIES,
         }
     }
 }
@@ -409,22 +431,30 @@ pub(crate) const KNOWN_KEYS: &[&str] = &[
     "provider.default",
     "providers",
     "providers.anthropic",
+    "providers.anthropic.max_retries",
     "providers.anthropic.max_tokens",
     "providers.anthropic.model",
     "providers.anthropic.temperature",
+    "providers.anthropic.timeout_secs",
     "providers.ollama",
     "providers.ollama.endpoint",
+    "providers.ollama.max_retries",
     "providers.ollama.model",
+    "providers.ollama.timeout_secs",
     "providers.openai",
+    "providers.openai.max_retries",
     "providers.openai.max_tokens",
     "providers.openai.model",
     "providers.openai.temperature",
+    "providers.openai.timeout_secs",
     "providers.openrouter",
     "providers.openrouter.endpoint",
     "providers.openrouter.http_referer",
+    "providers.openrouter.max_retries",
     "providers.openrouter.max_tokens",
     "providers.openrouter.model",
     "providers.openrouter.temperature",
+    "providers.openrouter.timeout_secs",
     "providers.openrouter.x_title",
     "style",
     "style.allowed_scopes",
