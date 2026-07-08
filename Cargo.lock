@@ -208,6 +208,7 @@ dependencies = [
  "assert_cmd",
  "clap",
  "globset",
+ "httpdate",
  "predicates",
  "reqwest",
  "serde",

@@ -5,7 +5,7 @@
 //! a response — see the acceptance criteria on provider issue #28.
 
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use reqwest::StatusCode;
 use reqwest::blocking::Client;
@@ -20,9 +20,9 @@ const REDACTED_HEADERS: &[&str] = &["authorization", "x-api-key"];
 /// Longest response-body snippet kept in [`ProviderError::BadResponse`].
 const SNIPPET_LIMIT: usize = 512;
 
-/// Base delay for exponential backoff on retryable failures, doubled
-/// each attempt unless a `Retry-After` header says otherwise.
-const BASE_BACKOFF: Duration = Duration::from_millis(500);
+/// Ceiling on the un-jittered backoff delay, in seconds. Attempt `n`
+/// waits `min(2^n, 30)` seconds before the jitter multiplier.
+const MAX_BACKOFF_SECS: u64 = 30;
 
 /// Blocking HTTP client shared by every provider adapter.
 ///
@@ -128,19 +128,42 @@ impl HttpClient {
     }
 }
 
-/// Parse a `Retry-After` header as whole seconds, ignoring HTTP-date
-/// values — every provider we target sends the numeric form.
+/// Parse a `Retry-After` header. Accepts either a whole-seconds count
+/// (`Retry-After: 1`) or an HTTP-date (`Retry-After: Wed, 21 Oct 2015
+/// 07:28:00 GMT`); a date already in the past yields `Duration::ZERO`.
 fn retry_after(resp: &reqwest::blocking::Response) -> Option<Duration> {
-    resp.headers()
-        .get("retry-after")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.trim().parse::<u64>().ok())
-        .map(Duration::from_secs)
+    let value = resp.headers().get("retry-after")?.to_str().ok()?;
+    let value = value.trim();
+
+    if let Ok(secs) = value.parse::<u64>() {
+        return Some(Duration::from_secs(secs));
+    }
+
+    let when = httpdate::parse_http_date(value).ok()?;
+    Some(
+        when.duration_since(SystemTime::now())
+            .unwrap_or(Duration::ZERO),
+    )
 }
 
-/// Exponential backoff for attempt `n` (0-indexed): `BASE_BACKOFF * 2^n`.
+/// Exponential backoff for attempt `n` (0-indexed):
+/// `min(2^n, MAX_BACKOFF_SECS) * (1 + jitter)` seconds, where `jitter`
+/// is uniform in `[0, 0.5)`. Jitter spreads retries so a fleet of
+/// clients hitting the same 429 doesn't stampede in lockstep.
 fn backoff(attempt: u8) -> Duration {
-    BASE_BACKOFF * 2u32.pow(attempt as u32)
+    let base = 2u64.saturating_pow(attempt as u32).min(MAX_BACKOFF_SECS);
+    Duration::from_secs_f64(base as f64 * (1.0 + jitter_fraction()))
+}
+
+/// A pseudo-random fraction in `[0, 0.5)`, seeded off the current
+/// clock's sub-second nanos. Good enough to decorrelate retries
+/// without pulling in an RNG dependency.
+fn jitter_fraction() -> f64 {
+    let nanos = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0);
+    (nanos % 500) as f64 / 1000.0
 }
 
 /// Truncate a response body to [`SNIPPET_LIMIT`] bytes on a `char`
@@ -299,6 +322,42 @@ mod tests {
             Resp {
                 message: "ok".into()
             }
+        );
+    }
+
+    #[tokio::test]
+    async fn honors_retry_after_seconds_before_retrying() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat"))
+            .respond_with(ResponseTemplate::new(429).insert_header("retry-after", "1"))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/chat"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"message": "ok"})))
+            .mount(&server)
+            .await;
+
+        let url = format!("{}/chat", server.uri());
+        let (resp, elapsed): (Resp, Duration) = tokio::task::spawn_blocking(move || {
+            let start = std::time::Instant::now();
+            let resp = client().post_json(&url, &[], &body()).unwrap();
+            (resp, start.elapsed())
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(
+            resp,
+            Resp {
+                message: "ok".into()
+            }
+        );
+        assert!(
+            elapsed >= Duration::from_secs(1),
+            "expected client to wait >= 1s for Retry-After, waited {elapsed:?}",
         );
     }
 
