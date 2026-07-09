@@ -1,7 +1,8 @@
 use std::process::ExitCode;
 
 use clap::Parser;
-use commitcrafter::cli::{Cli, Command, ConfigCmd, ConfigEditArgs, ConfigShowArgs};
+use commitcrafter::cli::{Cli, Command, ConfigCmd, ConfigEditArgs, ConfigShowArgs, ProvidersArgs};
+use commitcrafter::cmd;
 use commitcrafter::config::{Layered, Loaded, discover, edit, render_json, render_toml};
 use commitcrafter::error::Result;
 use commitcrafter::log;
@@ -43,10 +44,7 @@ fn run() -> Result<()> {
             info!("doctor — not yet implemented");
             Ok(())
         }
-        Some(Command::Providers(_)) => {
-            info!("providers — not yet implemented");
-            Ok(())
-        }
+        Some(Command::Providers(args)) => cmd_providers(args),
         Some(Command::History(_)) => {
             info!("history — not yet implemented");
             Ok(())
@@ -83,6 +81,33 @@ fn cmd_config_show(cli: &Cli, args: &ConfigShowArgs) -> Result<()> {
 /// scaffolding a starter template first if it doesn't exist yet.
 fn cmd_config_edit(args: &ConfigEditArgs) -> Result<()> {
     edit::run(args)
+}
+
+/// Print the provider key + reachability matrix. Reads config from
+/// files only (defaults + global + repo) — the default flow's CLI
+/// flags don't apply to a subcommand.
+fn cmd_providers(args: &ProvidersArgs) -> Result<()> {
+    let loaded = load_layered_from_files()?;
+    cmd::providers::run(&loaded.config, args)
+}
+
+/// Load the effective config from defaults + config files, with no
+/// CLI-flag or `--set` layer.
+fn load_layered_from_files() -> Result<Loaded> {
+    let mut layered = Layered::new();
+
+    if let Some(path) = discover::global_config_path()
+        && path.exists()
+    {
+        layered = layered.with_global_file(path)?;
+    }
+    if let Some(path) = discover::repo_config_path()
+        && path.exists()
+    {
+        layered = layered.with_repo_file(path)?;
+    }
+
+    layered.load()
 }
 
 fn load_layered_for_show(cli: &Cli) -> Result<Loaded> {

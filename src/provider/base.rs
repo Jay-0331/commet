@@ -126,6 +126,20 @@ impl HttpClient {
     pub fn timeout(&self) -> Duration {
         self.timeout
     }
+
+    /// Lightweight reachability probe: issue a `GET` and report whether
+    /// the server produced *any* HTTP response. A non-2xx status (e.g.
+    /// 401 from an unauthenticated `/models`) still counts as reachable
+    /// — only a transport error or timeout means unreachable. Does not
+    /// retry; the caller's timeout bounds the wait.
+    pub fn reachable(&self, url: &str, headers: &[(&str, &str)]) -> bool {
+        let mut builder = self.inner.get(url);
+        for (name, value) in headers {
+            builder = builder.header(*name, *value);
+        }
+        tracing::debug!(url, headers = ?redacted(headers), "reachability probe");
+        builder.send().is_ok()
+    }
 }
 
 /// Parse a `Retry-After` header. Accepts either a whole-seconds count
