@@ -7,10 +7,11 @@
 //! Palettes come from one of five builtin themes (`const` literals) or
 //! a user's `[ui.custom]` block, whose string fields are parsed by
 //! [`parse_color`] (`#rrggbb` hex or an ANSI color name). Terminal
-//! color-capability *downgrade* (truecolor → 256 → 16) is applied via
-//! [`Theme::from_config`]'s `cap` argument — the full quantization
-//! lands with the color-cap detection work (#38); today only the
-//! `None` (no-color) rung is implemented.
+//! color-capability *downgrade* is applied via [`Theme::downgrade`]:
+//! every `Rgb` role snaps to the nearest xterm-256 index or the
+//! nearest of the 16 named colors, or drops to `Color::Reset` when the
+//! terminal has no color. Capability detection lives in the module
+//! root ([`super::color_cap`]).
 
 use ratatui::style::Color;
 
@@ -32,8 +33,8 @@ pub struct Theme {
     pub border: Color,
 }
 
-/// How much color the target terminal can render. Detection is #38;
-/// this enum is the contract [`Theme::from_config`] consumes.
+/// How much color the target terminal can render. Detected by
+/// [`super::color_cap`]; consumed by [`Theme::downgrade`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ColorCap {
     /// 24-bit RGB (`$COLORTERM=truecolor`).
@@ -171,28 +172,115 @@ impl Theme {
         })
     }
 
-    /// Adapt the palette to a color capability. `None` drops all color
-    /// (every role becomes the terminal default); the 256- and 16-color
-    /// quantization rungs are handled in #38 and currently pass the
-    /// truecolor palette through unchanged.
-    fn downgrade(self, cap: ColorCap) -> Theme {
-        match cap {
-            ColorCap::None => Theme {
-                fg: Color::Reset,
-                bg: Color::Reset,
-                accent: Color::Reset,
-                success: Color::Reset,
-                warning: Color::Reset,
-                error: Color::Reset,
-                muted: Color::Reset,
-                diff_add: Color::Reset,
-                diff_del: Color::Reset,
-                diff_meta: Color::Reset,
-                border: Color::Reset,
-            },
-            ColorCap::TrueColor | ColorCap::Ansi256 | ColorCap::Ansi16 => self,
+    /// Adapt the palette to a terminal's color capability by mapping
+    /// each role through [`quantize`]. `TrueColor` is the identity;
+    /// `Ansi256`/`Ansi16` snap every `Rgb` to the nearest palette
+    /// entry; `None` drops all color to `Color::Reset`.
+    pub fn downgrade(self, cap: ColorCap) -> Theme {
+        Theme {
+            fg: quantize(self.fg, cap),
+            bg: quantize(self.bg, cap),
+            accent: quantize(self.accent, cap),
+            success: quantize(self.success, cap),
+            warning: quantize(self.warning, cap),
+            error: quantize(self.error, cap),
+            muted: quantize(self.muted, cap),
+            diff_add: quantize(self.diff_add, cap),
+            diff_del: quantize(self.diff_del, cap),
+            diff_meta: quantize(self.diff_meta, cap),
+            border: quantize(self.border, cap),
         }
     }
+}
+
+/// Map one color to the target capability. Non-`Rgb` colors (named,
+/// indexed, `Reset`) already fit every rung, so they pass through
+/// unchanged except under [`ColorCap::None`], which forces `Reset`.
+fn quantize(color: Color, cap: ColorCap) -> Color {
+    match cap {
+        ColorCap::None => Color::Reset,
+        ColorCap::TrueColor => color,
+        ColorCap::Ansi256 => match color {
+            Color::Rgb(r, g, b) => Color::Indexed(nearest_ansi256(r, g, b)),
+            other => other,
+        },
+        ColorCap::Ansi16 => match color {
+            Color::Rgb(r, g, b) => nearest_ansi16(r, g, b),
+            other => other,
+        },
+    }
+}
+
+/// Squared euclidean distance in RGB space (no sqrt — ordering only).
+fn rgb_dist(a: (u8, u8, u8), b: (u8, u8, u8)) -> u32 {
+    let d = |x: u8, y: u8| {
+        let diff = x as i32 - y as i32;
+        (diff * diff) as u32
+    };
+    d(a.0, b.0) + d(a.1, b.1) + d(a.2, b.2)
+}
+
+/// The six values each channel of the xterm-256 color cube snaps to.
+const CUBE_LEVELS: [u8; 6] = [0, 95, 135, 175, 215, 255];
+
+/// Nearest xterm-256 palette index for an RGB triple, choosing between
+/// the 6×6×6 color cube (16–231) and the 24-step grayscale ramp
+/// (232–255), whichever is closer to the original.
+fn nearest_ansi256(r: u8, g: u8, b: u8) -> u8 {
+    let level = |v: u8| -> usize {
+        CUBE_LEVELS
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, lv)| (**lv as i32 - v as i32).unsigned_abs())
+            .map(|(i, _)| i)
+            .unwrap()
+    };
+    let (ri, gi, bi) = (level(r), level(g), level(b));
+    let cube_rgb = (CUBE_LEVELS[ri], CUBE_LEVELS[gi], CUBE_LEVELS[bi]);
+    let cube_idx = 16 + 36 * ri as u8 + 6 * gi as u8 + bi as u8;
+    let cube_dist = rgb_dist((r, g, b), cube_rgb);
+
+    // Grayscale ramp: index i (0..=23) has value 8 + 10*i.
+    let avg = (r as u32 + g as u32 + b as u32) / 3;
+    let gi = (((avg as i32 - 8) as f32) / 10.0).round().clamp(0.0, 23.0) as u8;
+    let gray_val = 8 + 10 * gi;
+    let gray_dist = rgb_dist((r, g, b), (gray_val, gray_val, gray_val));
+
+    if gray_dist < cube_dist {
+        232 + gi
+    } else {
+        cube_idx
+    }
+}
+
+/// The 16 ANSI colors with their xterm RGB values, paired with the
+/// matching ratatui [`Color`] variant.
+const ANSI16: [(Color, (u8, u8, u8)); 16] = [
+    (Color::Black, (0, 0, 0)),
+    (Color::Red, (205, 0, 0)),
+    (Color::Green, (0, 205, 0)),
+    (Color::Yellow, (205, 205, 0)),
+    (Color::Blue, (0, 0, 238)),
+    (Color::Magenta, (205, 0, 205)),
+    (Color::Cyan, (0, 205, 205)),
+    (Color::Gray, (229, 229, 229)),
+    (Color::DarkGray, (127, 127, 127)),
+    (Color::LightRed, (255, 0, 0)),
+    (Color::LightGreen, (0, 255, 0)),
+    (Color::LightYellow, (255, 255, 0)),
+    (Color::LightBlue, (92, 92, 255)),
+    (Color::LightMagenta, (255, 0, 255)),
+    (Color::LightCyan, (0, 255, 255)),
+    (Color::White, (255, 255, 255)),
+];
+
+/// Nearest of the 16 named ANSI colors for an RGB triple.
+fn nearest_ansi16(r: u8, g: u8, b: u8) -> Color {
+    ANSI16
+        .iter()
+        .min_by_key(|(_, rgb)| rgb_dist((r, g, b), *rgb))
+        .map(|(color, _)| *color)
+        .unwrap()
 }
 
 /// Parse a color string: `#rrggbb` hex, `reset`, one of the 8 base
@@ -324,5 +412,53 @@ mod tests {
         assert_eq!(theme.accent, Color::Reset);
         assert_eq!(theme.error, Color::Reset);
         assert_eq!(theme.border, Color::Reset);
+    }
+
+    /// `#7aa2f7` snapshotted at every capability rung.
+    #[test]
+    fn accent_7aa2f7_downgrades_per_cap() {
+        let blue = Color::Rgb(0x7a, 0xa2, 0xf7); // (122, 162, 247)
+        assert_eq!(quantize(blue, ColorCap::TrueColor), blue);
+        assert_eq!(quantize(blue, ColorCap::Ansi256), Color::Indexed(111));
+        assert_eq!(quantize(blue, ColorCap::Ansi16), Color::LightBlue);
+        assert_eq!(quantize(blue, ColorCap::None), Color::Reset);
+    }
+
+    #[test]
+    fn downgrade_maps_whole_palette_and_leaves_named_colors_alone() {
+        // Ansi16 on the default palette: every role becomes a named
+        // (non-Rgb) color, and MONO (already named) is untouched.
+        let downgraded = DEFAULT.downgrade(ColorCap::Ansi16);
+        for role in [
+            downgraded.fg,
+            downgraded.accent,
+            downgraded.error,
+            downgraded.diff_add,
+        ] {
+            assert!(
+                !matches!(role, Color::Rgb(..)),
+                "role stayed Rgb after Ansi16 downgrade: {role:?}",
+            );
+        }
+        assert_eq!(MONO.downgrade(ColorCap::Ansi16), MONO);
+    }
+
+    #[test]
+    fn ansi256_picks_grayscale_for_near_gray_rgb() {
+        // A near-gray value should land on the 232–255 ramp, not the cube.
+        let idx = match quantize(Color::Rgb(0x80, 0x80, 0x80), ColorCap::Ansi256) {
+            Color::Indexed(i) => i,
+            other => panic!("expected indexed, got {other:?}"),
+        };
+        assert!(
+            (232..=255).contains(&idx),
+            "0x808080 -> {idx}, not grayscale"
+        );
+    }
+
+    #[test]
+    fn pure_black_and_white_map_to_ansi16_extremes() {
+        assert_eq!(nearest_ansi16(0, 0, 0), Color::Black);
+        assert_eq!(nearest_ansi16(255, 255, 255), Color::White);
     }
 }

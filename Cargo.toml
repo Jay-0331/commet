@@ -23,6 +23,7 @@ globset = "0.4"
 httpdate = "1"
 ratatui = "0.29"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+supports-color = "3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
