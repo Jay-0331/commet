@@ -6,3 +6,4 @@ pub mod error;
 pub mod git;
 pub mod log;
 pub mod provider;
+pub mod tui;
