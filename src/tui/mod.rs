@@ -1,11 +1,14 @@
 //! Terminal UI.
 //!
-//! Screens and widgets live here; for now the color [`theme`] palette
-//! plus terminal color-capability detection. Kept free of screen I/O
-//! so both are unit-testable.
+//! The color [`theme`] palette and color-capability detection (below),
+//! plus the [`terminal`] lifecycle (alt screen / raw mode / panic
+//! restore) and the [`AppScreen`] state machine every screen renders
+//! through.
 
+pub mod terminal;
 pub mod theme;
 
+pub use terminal::{App, AppScreen, Tui, enter, leave};
 pub use theme::{ColorCap, Theme};
 
 use crate::config::schema::ColorMode;
