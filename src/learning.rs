@@ -3,8 +3,8 @@
 //! Each accepted commit appends one [`LearningRecord`] as a single JSON
 //! line ([`append`]). Later runs read the store back ([`load`]) to feed
 //! few-shot examples into the prompt (#45). The store lives either
-//! globally (`$XDG_STATE_HOME/commitcrafter/history.jsonl`) or per-repo
-//! (`<repo>/.commitcrafter/history.jsonl`); scope selection is #46.
+//! globally (`$XDG_STATE_HOME/commet/history.jsonl`) or per-repo
+//! (`<repo>/.commet/history.jsonl`); scope selection is #46.
 //!
 //! When the live file grows past [`MAX_BYTES`] it rotates to numbered
 //! archives (`.1`…`.3`, oldest dropped). Only the live file feeds
@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use crate::config::schema::LearningScope;
 use crate::error::{Error, Result};
 
-/// Store filename under the commitcrafter state/repo directory.
+/// Store filename under the commet state/repo directory.
 const STORE_FILE: &str = "history.jsonl";
 
 /// Rotate once the live file exceeds 5 MiB.
@@ -55,8 +55,8 @@ pub struct LearningRecord {
     pub diff: String,
 }
 
-/// Global store path: `$XDG_STATE_HOME/commitcrafter/history.jsonl`,
-/// falling back to `$HOME/.local/state/commitcrafter/history.jsonl`.
+/// Global store path: `$XDG_STATE_HOME/commet/history.jsonl`,
+/// falling back to `$HOME/.local/state/commet/history.jsonl`.
 /// `None` when neither environment variable is usable.
 pub fn global_store_path() -> Option<PathBuf> {
     let xdg = std::env::var("XDG_STATE_HOME").ok();
@@ -69,7 +69,7 @@ pub fn global_store_path_with(xdg_state_home: Option<&str>, home: Option<&str>) 
     if let Some(xdg) = xdg_state_home
         && !xdg.is_empty()
     {
-        return Some(PathBuf::from(xdg).join("commitcrafter").join(STORE_FILE));
+        return Some(PathBuf::from(xdg).join("commet").join(STORE_FILE));
     }
     let home = home?;
     if home.is_empty() {
@@ -79,14 +79,14 @@ pub fn global_store_path_with(xdg_state_home: Option<&str>, home: Option<&str>) 
         PathBuf::from(home)
             .join(".local")
             .join("state")
-            .join("commitcrafter")
+            .join("commet")
             .join(STORE_FILE),
     )
 }
 
-/// Per-repo store path: `<repo_root>/.commitcrafter/history.jsonl`.
+/// Per-repo store path: `<repo_root>/.commet/history.jsonl`.
 pub fn repo_store_path(repo_root: &Path) -> PathBuf {
-    repo_root.join(".commitcrafter").join(STORE_FILE)
+    repo_root.join(".commet").join(STORE_FILE)
 }
 
 /// Append one record as a JSON line to `path`, creating parent
@@ -251,7 +251,7 @@ mod tests {
     fn record(text: &str) -> LearningRecord {
         LearningRecord {
             ts: "2026-07-11T00:00:00Z".into(),
-            repo: "commitcrafter".into(),
+            repo: "commet".into(),
             branch: "main".into(),
             provider: "anthropic".into(),
             model: "claude-sonnet-4-6".into(),
@@ -290,7 +290,7 @@ mod tests {
     #[test]
     fn append_creates_parent_directories() {
         let dir = tempdir().unwrap();
-        let path = dir.path().join(".commitcrafter").join("history.jsonl");
+        let path = dir.path().join(".commet").join("history.jsonl");
         append(&path, &record("feat: nested")).unwrap();
         assert!(path.exists());
         assert_eq!(load(&path).unwrap().len(), 1);
@@ -378,7 +378,7 @@ mod tests {
     #[test]
     fn global_path_prefers_xdg_state_home() {
         let p = global_store_path_with(Some("/xdg/state"), Some("/home/u")).unwrap();
-        assert_eq!(p, PathBuf::from("/xdg/state/commitcrafter/history.jsonl"));
+        assert_eq!(p, PathBuf::from("/xdg/state/commet/history.jsonl"));
     }
 
     #[test]
@@ -386,15 +386,15 @@ mod tests {
         let p = global_store_path_with(None, Some("/home/u")).unwrap();
         assert_eq!(
             p,
-            PathBuf::from("/home/u/.local/state/commitcrafter/history.jsonl")
+            PathBuf::from("/home/u/.local/state/commet/history.jsonl")
         );
         assert!(global_store_path_with(Some(""), None).is_none());
     }
 
     #[test]
-    fn repo_path_is_under_dot_commitcrafter() {
+    fn repo_path_is_under_dot_commet() {
         let p = repo_store_path(Path::new("/work/repo"));
-        assert_eq!(p, PathBuf::from("/work/repo/.commitcrafter/history.jsonl"));
+        assert_eq!(p, PathBuf::from("/work/repo/.commet/history.jsonl"));
     }
 
     // ---------- Store (scope filter) ----------

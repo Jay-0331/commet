@@ -1,14 +1,14 @@
 use std::process::ExitCode;
 
 use clap::Parser;
-use commitcrafter::cli::{
+use commet::cli::{
     Cli, Command, ConfigCmd, ConfigEditArgs, ConfigShowArgs, HistoryArgs, ProvidersArgs,
 };
-use commitcrafter::cmd;
-use commitcrafter::config::{Layered, Loaded, discover, edit, render_json, render_toml};
-use commitcrafter::error::Result;
-use commitcrafter::git;
-use commitcrafter::log;
+use commet::cmd;
+use commet::config::{Layered, Loaded, discover, edit, render_json, render_toml};
+use commet::error::Result;
+use commet::git;
+use commet::log;
 use tracing::{debug, info};
 
 fn main() -> ExitCode {

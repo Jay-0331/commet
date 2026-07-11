@@ -1,4 +1,4 @@
-# commitcrafter — common dev tasks
+# commet — common dev tasks
 #
 # Run `just` (no args) to list recipes. Install with `cargo install just` or
 # `brew install just`. CI continues to call `cargo` directly so this file is

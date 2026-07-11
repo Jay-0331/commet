@@ -1,11 +1,11 @@
 //! RAII guard that auto-unstages paths cc staged this session.
 //!
-//! When `cc` runs the default flow, it stages files on the user's
+//! When `commet` runs the default flow, it stages files on the user's
 //! behalf so the LLM has something to look at. If the user later
 //! aborts (`q` in the TUI, Ctrl-C, an unwinding panic), those
 //! changes should not be left in the index — the user expects
 //! their working state to look the way it did before they ran
-//! `cc`.
+//! `commet`.
 //!
 //! [`StageTracker`] wraps that contract:
 //!

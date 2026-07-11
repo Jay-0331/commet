@@ -2,7 +2,7 @@ use assert_cmd::Command;
 use predicates::str::contains;
 
 fn cc() -> Command {
-    Command::cargo_bin("cc").expect("cc binary should build")
+    Command::cargo_bin("commet").expect("commet binary should build")
 }
 
 #[test]

@@ -1,6 +1,6 @@
 //! Crate-wide error type and process exit-code mapping.
 //!
-//! Every fallible operation in `commitcrafter` returns
+//! Every fallible operation in `commet` returns
 //! [`Result<T>`](Result), which uses the [`Error`] enum below. `main` walks
 //! that error and converts it to a process [`ExitCode`] via
 //! [`Error::exit_code`] so the mapping lives in one place.
