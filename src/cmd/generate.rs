@@ -13,12 +13,14 @@
 
 use std::io::Write;
 use std::path::Path;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::cli::{self, GenerateOpts};
 use crate::config::Config;
 use crate::config::schema::{self, Style};
 use crate::error::{Error, Result};
 use crate::git;
+use crate::learning::{LearningRecord, Store};
 use crate::prompt::{self, GenOpts};
 use crate::provider::registry;
 
@@ -109,7 +111,21 @@ pub fn run(config: &Config, opts: &GenerateOpts, cwd: &Path) -> Result<()> {
     }
 
     if opts.yes {
-        return commit(cwd, &candidates[0], opts.no_verify);
+        commit(cwd, &candidates[0], opts.no_verify)?;
+        record_accepted(
+            config,
+            cwd,
+            &Accepted {
+                provider: &provider_name,
+                model: &gen_opts.model,
+                format: style.format,
+                candidates: &candidates,
+                accepted_index: 0,
+                files: &files,
+                diff: &shrunk,
+            },
+        );
+        return Ok(());
     }
 
     // No flag and no TUI yet: show the message, don't touch the repo.
@@ -211,6 +227,98 @@ fn render_candidates(candidates: &[String]) -> String {
         .join("\n\n")
 }
 
+/// The data recorded to the learning store on an accepted commit.
+struct Accepted<'a> {
+    provider: &'a str,
+    model: &'a str,
+    format: schema::MessageFormat,
+    candidates: &'a [String],
+    accepted_index: usize,
+    files: &'a [String],
+    diff: &'a str,
+}
+
+/// Append a [`LearningRecord`] for an accepted commit. Best-effort:
+/// respects `[learning].enabled` + scope, and a write failure is logged
+/// rather than surfaced — the commit already succeeded.
+fn record_accepted(config: &Config, cwd: &Path, acc: &Accepted) {
+    if !config.learning.enabled {
+        return;
+    }
+    let repo_root = git::repo_root(cwd).ok();
+    let store = Store::open(config.learning.scope, repo_root.as_deref());
+    if !store.is_enabled() {
+        return;
+    }
+
+    let repo = repo_root
+        .as_deref()
+        .and_then(Path::file_name)
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let branch = git::current_branch(cwd).unwrap_or_else(|_| "HEAD".into());
+
+    let record = LearningRecord {
+        ts: iso8601_utc(SystemTime::now()),
+        repo,
+        branch,
+        provider: acc.provider.to_string(),
+        model: acc.model.to_string(),
+        format: format_name(acc.format).to_string(),
+        candidates: acc.candidates.to_vec(),
+        accepted_index: acc.accepted_index,
+        edited_text: acc.candidates[acc.accepted_index].clone(),
+        files: acc.files.to_vec(),
+        diff_bytes: acc.diff.len(),
+        diff: acc.diff.to_string(),
+    };
+
+    if let Err(e) = store.write(&record) {
+        tracing::warn!(error = %e, "failed to record accepted commit to learning store");
+    }
+}
+
+/// Config-file spelling of a message format, for the stored record.
+fn format_name(f: schema::MessageFormat) -> &'static str {
+    match f {
+        schema::MessageFormat::Plain => "plain",
+        schema::MessageFormat::Conventional => "conventional",
+        schema::MessageFormat::ConventionalBody => "conventional+body",
+        schema::MessageFormat::Gitmoji => "gitmoji",
+        schema::MessageFormat::SubjectBody => "subject+body",
+        schema::MessageFormat::Custom => "custom",
+    }
+}
+
+/// Format a `SystemTime` as a UTC ISO-8601 / RFC-3339 instant
+/// (`YYYY-MM-DDThh:mm:ssZ`). Std-only, so the learning store stays
+/// clock- and dependency-free while records sort chronologically.
+fn iso8601_utc(t: SystemTime) -> String {
+    let secs = t
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let (days, rem) = ((secs / 86_400) as i64, secs % 86_400);
+    let (hh, mm, ss) = (rem / 3600, (rem % 3600) / 60, rem % 60);
+    let (y, mo, d) = civil_from_days(days);
+    format!("{y:04}-{mo:02}-{d:02}T{hh:02}:{mm:02}:{ss:02}Z")
+}
+
+/// Days-since-Unix-epoch → (year, month, day). Howard Hinnant's
+/// `civil_from_days` algorithm.
+fn civil_from_days(z: i64) -> (i64, u32, u32) {
+    let z = z + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097; // [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365; // [0, 399]
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
+    let mp = (5 * doy + 2) / 153; // [0, 11]
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32; // [1, 31]
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32; // [1, 12]
+    (if m <= 2 { y + 1 } else { y }, m, d)
+}
+
 /// Commit `message` via `git commit -F <tempfile>` so the user's
 /// `commit.template`, hooks, and signing behave exactly as a normal
 /// commit. Honors `--no-verify`.
@@ -282,5 +390,24 @@ mod tests {
         let multi = render_candidates(&["a".into(), "b".into()]);
         assert!(multi.contains("--- candidate 1 ---\na"));
         assert!(multi.contains("--- candidate 2 ---\nb"));
+    }
+
+    #[test]
+    fn iso8601_formats_known_instants() {
+        assert_eq!(iso8601_utc(UNIX_EPOCH), "1970-01-01T00:00:00Z");
+        assert_eq!(
+            iso8601_utc(UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000)),
+            "2023-11-14T22:13:20Z"
+        );
+    }
+
+    #[test]
+    fn format_name_matches_config_spelling() {
+        assert_eq!(
+            format_name(schema::MessageFormat::ConventionalBody),
+            "conventional+body"
+        );
+        assert_eq!(format_name(schema::MessageFormat::Gitmoji), "gitmoji");
+        assert_eq!(format_name(schema::MessageFormat::Plain), "plain");
     }
 }

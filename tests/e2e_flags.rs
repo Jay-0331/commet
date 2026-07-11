@@ -43,11 +43,15 @@ fn stage(dir: &Path, name: &str, contents: &str) {
     git(dir, &["add", name]);
 }
 
-/// A `cc` command rooted in `dir` with the mock response set.
+/// A `cc` command rooted in `dir` with the mock response set. Learning
+/// is turned off by default so a stray `-y` in these tests never writes
+/// to the developer's real global history store; the recording test
+/// re-enables it with a repo scope confined to its tempdir.
 fn cc(dir: &Path, response: &str) -> AssertCommand {
     let mut cmd = AssertCommand::cargo_bin("cc").unwrap();
     cmd.current_dir(dir);
     cmd.env("COMMITCRAFTER_MOCK_RESPONSE", response);
+    cmd.args(["--set", "learning.scope=off"]);
     cmd
 }
 
@@ -215,6 +219,37 @@ fn no_verify_bypasses_a_failing_pre_commit_hook() {
         .assert()
         .success();
     assert_eq!(head_subject(dir.path()).as_deref(), Some("feat: forced"));
+}
+
+#[test]
+fn yes_records_the_accepted_commit_to_the_repo_store() {
+    let dir = repo();
+    stage(dir.path(), "a.txt", "hello\n");
+
+    // Override the helper's `scope=off` with a repo scope — the store
+    // then lives inside this tempdir, never the real global path.
+    cc(dir.path(), "feat: recorded")
+        .args(["-y", "--set", "learning.scope=repo"])
+        .assert()
+        .success();
+
+    let store = dir.path().join(".commitcrafter/history.jsonl");
+    let content = fs::read_to_string(&store).expect("history file written");
+    let rec: serde_json::Value = serde_json::from_str(content.lines().next().unwrap()).unwrap();
+
+    assert_eq!(rec["edited_text"], "feat: recorded");
+    assert_eq!(rec["accepted_index"], 0);
+    assert!(
+        rec["ts"].as_str().unwrap().ends_with('Z'),
+        "ts is ISO-8601 UTC"
+    );
+    assert!(
+        rec["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f == "a.txt")
+    );
 }
 
 #[test]
