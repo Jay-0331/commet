@@ -6,5 +6,6 @@ pub mod error;
 pub mod git;
 pub mod learning;
 pub mod log;
+pub mod prompt;
 pub mod provider;
 pub mod tui;
