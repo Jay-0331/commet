@@ -13,18 +13,18 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// Suffix appended to the chosen config directory.
-const CONFIG_FILE: &str = "commitcrafter/config.toml";
+const CONFIG_FILE: &str = "commet/config.toml";
 
 /// Per-repo config file name, looked up relative to the repo root
 /// returned by `git rev-parse --show-toplevel`.
-pub const REPO_CONFIG_FILE: &str = ".commitcrafter.toml";
+pub const REPO_CONFIG_FILE: &str = ".commet.toml";
 
 /// Resolve the global config file path, following the XDG Base
 /// Directory spec on Linux/macOS:
 ///
-/// 1. `$XDG_CONFIG_HOME/commitcrafter/config.toml` if `XDG_CONFIG_HOME`
+/// 1. `$XDG_CONFIG_HOME/commet/config.toml` if `XDG_CONFIG_HOME`
 ///    is set and non-empty.
-/// 2. `$HOME/.config/commitcrafter/config.toml` otherwise.
+/// 2. `$HOME/.config/commet/config.toml` otherwise.
 ///
 /// Returns `None` only if neither variable is set (extremely unusual,
 /// but we surface it as "no global config" rather than panicking).
@@ -87,13 +87,13 @@ mod tests {
     #[test]
     fn xdg_takes_precedence_over_home() {
         let p = global_config_path_with(Some("/x/cfg"), Some("/h")).unwrap();
-        assert_eq!(p, PathBuf::from("/x/cfg/commitcrafter/config.toml"));
+        assert_eq!(p, PathBuf::from("/x/cfg/commet/config.toml"));
     }
 
     #[test]
     fn empty_xdg_falls_back_to_home() {
         let p = global_config_path_with(Some(""), Some("/h")).unwrap();
-        assert_eq!(p, PathBuf::from("/h/.config/commitcrafter/config.toml"));
+        assert_eq!(p, PathBuf::from("/h/.config/commet/config.toml"));
     }
 
     #[test]
@@ -106,10 +106,7 @@ mod tests {
     #[test]
     fn missing_xdg_uses_home() {
         let p = global_config_path_with(None, Some("/users/alice")).unwrap();
-        assert_eq!(
-            p,
-            PathBuf::from("/users/alice/.config/commitcrafter/config.toml"),
-        );
+        assert_eq!(p, PathBuf::from("/users/alice/.config/commet/config.toml"),);
     }
 
     #[test]

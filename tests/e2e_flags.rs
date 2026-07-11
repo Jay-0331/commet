@@ -2,9 +2,9 @@
 //! flag, driven through the offline mock provider.
 //!
 //! Each test builds a throwaway git repo, stages a change, sets
-//! `COMMITCRAFTER_MOCK_RESPONSE` (so `provider::registry` returns the
+//! `COMMET_MOCK_RESPONSE` (so `provider::registry` returns the
 //! mock), runs `cc`, and asserts the observable: stdout, the created
-//! commit, or the prompt recorded to `COMMITCRAFTER_MOCK_LOG`.
+//! commit, or the prompt recorded to `COMMET_MOCK_LOG`.
 //!
 //! Compiled only with the `mock` feature (CI runs `--all-features`);
 //! without it the whole file is empty.
@@ -48,9 +48,9 @@ fn stage(dir: &Path, name: &str, contents: &str) {
 /// to the developer's real global history store; the recording test
 /// re-enables it with a repo scope confined to its tempdir.
 fn cc(dir: &Path, response: &str) -> AssertCommand {
-    let mut cmd = AssertCommand::cargo_bin("cc").unwrap();
+    let mut cmd = AssertCommand::cargo_bin("commet").unwrap();
     cmd.current_dir(dir);
-    cmd.env("COMMITCRAFTER_MOCK_RESPONSE", response);
+    cmd.env("COMMET_MOCK_RESPONSE", response);
     cmd.args(["--set", "learning.scope=off"]);
     cmd
 }
@@ -141,7 +141,7 @@ fn type_gitmoji_puts_the_rule_in_the_prompt() {
 
     cc(dir.path(), "✨ add greeting")
         .args(["-t", "gitmoji", "--print"])
-        .env("COMMITCRAFTER_MOCK_LOG", &log)
+        .env("COMMET_MOCK_LOG", &log)
         .assert()
         .success();
 
@@ -160,7 +160,7 @@ fn prompt_flag_appends_user_override() {
 
     cc(dir.path(), "feat: saludo")
         .args(["-p", "write in Spanish", "--print"])
-        .env("COMMITCRAFTER_MOCK_LOG", &log)
+        .env("COMMET_MOCK_LOG", &log)
         .assert()
         .success();
 
@@ -181,7 +181,7 @@ fn exclude_drops_matching_paths_from_the_diff() {
 
     cc(dir.path(), "chore: update")
         .args(["-x", "*.env", "--print"])
-        .env("COMMITCRAFTER_MOCK_LOG", &log)
+        .env("COMMET_MOCK_LOG", &log)
         .assert()
         .success();
 
@@ -233,7 +233,7 @@ fn yes_records_the_accepted_commit_to_the_repo_store() {
         .assert()
         .success();
 
-    let store = dir.path().join(".commitcrafter/history.jsonl");
+    let store = dir.path().join(".commet/history.jsonl");
     let content = fs::read_to_string(&store).expect("history file written");
     let rec: serde_json::Value = serde_json::from_str(content.lines().next().unwrap()).unwrap();
 

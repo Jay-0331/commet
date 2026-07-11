@@ -1,16 +1,16 @@
 //! Deterministic, offline provider for integration tests.
 //!
 //! Compiled only under `cfg(test)` or the `mock` feature. When
-//! `$COMMITCRAFTER_MOCK_RESPONSE` is set, [`super::registry`] (with the
+//! `$COMMET_MOCK_RESPONSE` is set, [`super::registry`] (with the
 //! `mock` feature) returns this provider under every provider name, so
 //! the default generate flow runs end to end without touching the
 //! network. Controlled entirely by environment variables:
 //!
-//! - `COMMITCRAFTER_MOCK_RESPONSE` — newline-separated candidates
+//! - `COMMET_MOCK_RESPONSE` — newline-separated candidates
 //!   (one line per candidate, so `-g 3` works).
-//! - `COMMITCRAFTER_MOCK_LOG` — optional path; the last
+//! - `COMMET_MOCK_LOG` — optional path; the last
 //!   [`GenerateRequest`] is written there as JSON for prompt assertions.
-//! - `COMMITCRAFTER_MOCK_DELAY_MS` — optional per-call sleep so spinner
+//! - `COMMET_MOCK_DELAY_MS` — optional per-call sleep so spinner
 //!   tests can observe multiple frames.
 
 use std::collections::HashMap;
@@ -19,11 +19,11 @@ use std::time::Duration;
 use super::{GenerateRequest, Provider, ProviderError};
 
 /// Env var holding the newline-separated candidate list.
-pub const RESPONSE_ENV: &str = "COMMITCRAFTER_MOCK_RESPONSE";
+pub const RESPONSE_ENV: &str = "COMMET_MOCK_RESPONSE";
 /// Env var naming the file to record the last request to.
-pub const LOG_ENV: &str = "COMMITCRAFTER_MOCK_LOG";
+pub const LOG_ENV: &str = "COMMET_MOCK_LOG";
 /// Env var setting a per-call delay in milliseconds.
-pub const DELAY_ENV: &str = "COMMITCRAFTER_MOCK_DELAY_MS";
+pub const DELAY_ENV: &str = "COMMET_MOCK_DELAY_MS";
 
 /// Offline provider driven by environment variables.
 pub struct MockProvider;

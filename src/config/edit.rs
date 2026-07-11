@@ -4,9 +4,9 @@
 //!
 //! Target selection (low → high priority):
 //!
-//! 1. **Auto** (default) — per-repo `.commitcrafter.toml` when inside
+//! 1. **Auto** (default) — per-repo `.commet.toml` when inside
 //!    a git repo; otherwise the global file under
-//!    `$XDG_CONFIG_HOME/commitcrafter/config.toml`.
+//!    `$XDG_CONFIG_HOME/commet/config.toml`.
 //! 2. **`--repo`** — force the per-repo file; error if not inside a
 //!    repo.
 //! 3. **`--global`** — force the global file; error if `$HOME` /
@@ -28,10 +28,10 @@ use super::schema::Config;
 
 /// Banner inserted at the top of a newly-scaffolded config file.
 pub const TEMPLATE_HEADER: &str = "\
-# commitcrafter configuration
+# commet configuration
 #
 # `cc config show` prints the merged effective values from this file
-# plus the global config (~/.config/commitcrafter/config.toml).
+# plus the global config (~/.config/commet/config.toml).
 #
 # API keys are NEVER stored here. Set them via environment variables:
 #   ANTHROPIC_API_KEY   OPENAI_API_KEY   OPENROUTER_API_KEY
@@ -122,18 +122,16 @@ mod tests {
     fn auto_prefers_repo_when_available() {
         let target = pick_target(
             &args(false, false),
-            Some(PathBuf::from("/repo/.commitcrafter.toml")),
-            Some(PathBuf::from(
-                "/home/user/.config/commitcrafter/config.toml",
-            )),
+            Some(PathBuf::from("/repo/.commet.toml")),
+            Some(PathBuf::from("/home/user/.config/commet/config.toml")),
         )
         .unwrap();
-        assert_eq!(target, PathBuf::from("/repo/.commitcrafter.toml"));
+        assert_eq!(target, PathBuf::from("/repo/.commet.toml"));
     }
 
     #[test]
     fn auto_falls_back_to_global_when_outside_repo() {
-        let global = PathBuf::from("/home/user/.config/commitcrafter/config.toml");
+        let global = PathBuf::from("/home/user/.config/commet/config.toml");
         let target = pick_target(&args(false, false), None, Some(global.clone())).unwrap();
         assert_eq!(target, global);
     }
@@ -146,10 +144,10 @@ mod tests {
 
     #[test]
     fn global_flag_forces_global_even_inside_repo() {
-        let global = PathBuf::from("/home/user/.config/commitcrafter/config.toml");
+        let global = PathBuf::from("/home/user/.config/commet/config.toml");
         let target = pick_target(
             &args(true, false),
-            Some(PathBuf::from("/repo/.commitcrafter.toml")),
+            Some(PathBuf::from("/repo/.commet.toml")),
             Some(global.clone()),
         )
         .unwrap();
@@ -165,7 +163,7 @@ mod tests {
 
     #[test]
     fn repo_flag_forces_repo() {
-        let repo = PathBuf::from("/repo/.commitcrafter.toml");
+        let repo = PathBuf::from("/repo/.commet.toml");
         let target = pick_target(
             &args(false, true),
             Some(repo.clone()),
@@ -190,7 +188,7 @@ mod tests {
         assert!(path.exists(), "scaffold should create the file");
 
         let text = std::fs::read_to_string(&path).unwrap();
-        assert!(text.starts_with("# commitcrafter configuration"));
+        assert!(text.starts_with("# commet configuration"));
         assert!(
             text.contains("ANTHROPIC_API_KEY"),
             "header should mention env vars",

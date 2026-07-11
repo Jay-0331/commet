@@ -10,10 +10,10 @@ use assert_cmd::Command;
 use tempfile::TempDir;
 
 fn cc(tmp: &TempDir) -> Command {
-    let mut cmd = Command::cargo_bin("cc").expect("cc binary");
+    let mut cmd = Command::cargo_bin("commet").expect("commet binary");
     cmd.current_dir(tmp.path())
         .env_remove("XDG_CONFIG_HOME")
-        .env_remove("COMMITCRAFTER_LOG")
+        .env_remove("COMMET_LOG")
         .env_remove("VISUAL")
         .env("HOME", tmp.path())
         .env("EDITOR", "/usr/bin/true");
@@ -23,7 +23,7 @@ fn cc(tmp: &TempDir) -> Command {
 fn expected_global_path(tmp: &TempDir) -> PathBuf {
     tmp.path()
         .join(".config")
-        .join("commitcrafter")
+        .join("commet")
         .join("config.toml")
 }
 
@@ -42,7 +42,7 @@ fn config_edit_scaffolds_global_when_outside_repo() {
 
     assert!(global.exists(), "scaffolded file should exist");
     let text = std::fs::read_to_string(&global).unwrap();
-    assert!(text.starts_with("# commitcrafter configuration"));
+    assert!(text.starts_with("# commet configuration"));
     assert!(text.contains("[provider]"));
     assert!(text.contains("ANTHROPIC_API_KEY"));
 }
@@ -79,7 +79,7 @@ fn config_edit_global_flag_targets_global_even_inside_repo() {
         .expect("git init succeeded");
 
     let global = expected_global_path(&tmp);
-    let repo = tmp.path().join(".commitcrafter.toml");
+    let repo = tmp.path().join(".commet.toml");
     assert!(!global.exists());
     assert!(!repo.exists());
 
@@ -128,7 +128,7 @@ fn config_edit_inside_repo_targets_per_repo_file_by_default() {
         .then_some(())
         .expect("git init succeeded");
 
-    let repo = tmp.path().join(".commitcrafter.toml");
+    let repo = tmp.path().join(".commet.toml");
     let global = expected_global_path(&tmp);
 
     let out = cc(&tmp).args(["config", "edit"]).output().unwrap();

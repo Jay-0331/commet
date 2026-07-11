@@ -1,4 +1,4 @@
-//! End-to-end smoke tests for [`commitcrafter::git`] against real
+//! End-to-end smoke tests for [`commet::git`] against real
 //! `git` binaries in tempdir repositories.
 //!
 //! Each test sets author + committer identity via environment
@@ -9,7 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use commitcrafter::git::{self, FileStatus};
+use commet::git::{self, FileStatus};
 
 /// Initialize a fresh git repo in a tempdir.
 fn make_repo() -> (tempfile::TempDir, PathBuf) {
@@ -25,8 +25,8 @@ fn make_repo() -> (tempfile::TempDir, PathBuf) {
     // Local identity so `git commit` doesn't trip over a missing
     // global config.
     for (k, v) in [
-        ("user.email", "tests@commitcrafter.invalid"),
-        ("user.name", "commitcrafter tests"),
+        ("user.email", "tests@commet.invalid"),
+        ("user.name", "commet tests"),
         ("commit.gpgsign", "false"),
         ("init.defaultBranch", "main"),
     ] {
@@ -128,11 +128,11 @@ fn status_porcelain_surfaces_rename_with_both_paths() {
     let entries = git::status_porcelain(&root).unwrap();
     let rename = entries
         .iter()
-        .find(|e| matches!(e.status, commitcrafter::git::FileStatus::Renamed { .. }))
+        .find(|e| matches!(e.status, commet::git::FileStatus::Renamed { .. }))
         .expect("rename entry present in status output");
 
     match &rename.status {
-        commitcrafter::git::FileStatus::Renamed { from, to } => {
+        commet::git::FileStatus::Renamed { from, to } => {
             assert_eq!(from, &PathBuf::from("before.rs"));
             assert_eq!(to, &PathBuf::from("after.rs"));
         }
@@ -252,7 +252,7 @@ fn diff_staged_of_clean_repo_is_empty() {
 
 #[test]
 fn stage_tracker_unstages_on_drop_when_enabled() {
-    use commitcrafter::git::StageTracker;
+    use commet::git::StageTracker;
 
     let (_tmp, root) = make_repo();
     make_initial_commit(&root);
@@ -275,7 +275,7 @@ fn stage_tracker_unstages_on_drop_when_enabled() {
 
 #[test]
 fn stage_tracker_release_disarms_drop() {
-    use commitcrafter::git::StageTracker;
+    use commet::git::StageTracker;
 
     let (_tmp, root) = make_repo();
     make_initial_commit(&root);
@@ -297,7 +297,7 @@ fn stage_tracker_release_disarms_drop() {
 
 #[test]
 fn stage_tracker_explicit_abort_restores_paths() {
-    use commitcrafter::git::StageTracker;
+    use commet::git::StageTracker;
 
     let (_tmp, root) = make_repo();
     make_initial_commit(&root);
@@ -319,7 +319,7 @@ fn stage_tracker_explicit_abort_restores_paths() {
 
 #[test]
 fn stage_tracker_disabled_does_not_unstage_on_drop() {
-    use commitcrafter::git::StageTracker;
+    use commet::git::StageTracker;
 
     let (_tmp, root) = make_repo();
     make_initial_commit(&root);
@@ -342,7 +342,7 @@ fn stage_tracker_disabled_does_not_unstage_on_drop() {
 fn stage_tracker_unstages_on_panic_unwind() {
     use std::panic;
 
-    use commitcrafter::git::StageTracker;
+    use commet::git::StageTracker;
 
     let (_tmp, root) = make_repo();
     make_initial_commit(&root);
@@ -365,7 +365,7 @@ fn stage_tracker_unstages_on_panic_unwind() {
 
 #[test]
 fn stage_tracker_only_unstages_paths_it_staged() {
-    use commitcrafter::git::StageTracker;
+    use commet::git::StageTracker;
 
     let (_tmp, root) = make_repo();
     make_initial_commit(&root);

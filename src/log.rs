@@ -1,10 +1,10 @@
 //! `tracing` initialization.
 //!
-//! Reads the log filter from `COMMITCRAFTER_LOG` (default `warn`) and
+//! Reads the log filter from `COMMET_LOG` (default `warn`) and
 //! installs a single global subscriber that writes to stderr.
 //!
 //! When the ratatui TUI lands (E5) this module will gain a second entry
-//! point that routes to a log file under `$XDG_STATE_HOME/commitcrafter/`
+//! point that routes to a log file under `$XDG_STATE_HOME/commet/`
 //! so the screen stays clean. For now the binary never enters the TUI, so
 //! stderr is the only sink we need.
 
@@ -12,8 +12,8 @@ use tracing_subscriber::EnvFilter;
 use tracing_subscriber::fmt;
 
 /// Environment variable consulted for the log filter (e.g.
-/// `COMMITCRAFTER_LOG=info,reqwest=warn`).
-pub const ENV_VAR: &str = "COMMITCRAFTER_LOG";
+/// `COMMET_LOG=info,reqwest=warn`).
+pub const ENV_VAR: &str = "COMMET_LOG";
 
 /// Default filter when [`ENV_VAR`] is unset or empty.
 pub const DEFAULT_FILTER: &str = "warn";
@@ -41,7 +41,7 @@ mod tests {
     #[test]
     fn env_var_and_default_match_documentation() {
         // Locks the contract advertised in `cc --help` and the README.
-        assert_eq!(ENV_VAR, "COMMITCRAFTER_LOG");
+        assert_eq!(ENV_VAR, "COMMET_LOG");
         assert_eq!(DEFAULT_FILTER, "warn");
     }
 

@@ -693,10 +693,8 @@ mod tests {
     fn malformed_toml_in_file_layer_surfaces_path() {
         // Write a temp file with broken TOML; with_global_file should
         // surface the path in the error message.
-        let tmp = std::env::temp_dir().join(format!(
-            "commitcrafter-merge-bad-{}.toml",
-            std::process::id()
-        ));
+        let tmp =
+            std::env::temp_dir().join(format!("commet-merge-bad-{}.toml", std::process::id()));
         std::fs::write(&tmp, "this is = not = toml").unwrap();
         let err = Layered::new().with_global_file(&tmp).unwrap_err();
         let msg = err.to_string();
@@ -710,7 +708,7 @@ mod tests {
 
     #[test]
     fn missing_file_surfaces_path_in_error() {
-        let tmp = PathBuf::from("/nonexistent/commitcrafter-config-does-not-exist.toml");
+        let tmp = PathBuf::from("/nonexistent/commet-config-does-not-exist.toml");
         let err = Layered::new().with_global_file(&tmp).unwrap_err();
         let msg = err.to_string();
         assert!(

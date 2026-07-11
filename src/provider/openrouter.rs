@@ -11,7 +11,7 @@ use std::time::Duration;
 use super::{ChatMessage, ChatRequest, GenerateRequest, HttpClient, Provider, ProviderError};
 
 const DEFAULT_BASE_URL: &str = "https://openrouter.ai/api/v1";
-const DEFAULT_X_TITLE: &str = "commitcrafter";
+const DEFAULT_X_TITLE: &str = "commet";
 
 pub struct OpenRouterProvider {
     client: HttpClient,

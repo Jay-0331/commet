@@ -82,7 +82,7 @@ fn empty_hint(enabled: bool, scope: LearningScope, paths: &[PathBuf]) -> String 
     }
 
     let mut msg = String::from(
-        "No history yet. Accepted commit messages are recorded here once you commit with `cc`.",
+        "No history yet. Accepted commit messages are recorded here once you commit with `commet`.",
     );
     if !paths.is_empty() {
         msg.push_str("\nStore: ");
@@ -105,7 +105,7 @@ mod tests {
     fn record(ts: &str, subject: &str) -> LearningRecord {
         LearningRecord {
             ts: ts.into(),
-            repo: "commitcrafter".into(),
+            repo: "commet".into(),
             branch: "main".into(),
             provider: "anthropic".into(),
             model: "claude-sonnet-4-6".into(),
@@ -135,7 +135,7 @@ mod tests {
     #[test]
     fn write_five_then_history_last_three() {
         let dir = tempdir().unwrap();
-        let path = dir.path().join(".commitcrafter").join("history.jsonl");
+        let path = dir.path().join(".commet").join("history.jsonl");
         for i in 1..=5 {
             learning::append(
                 &path,
@@ -180,9 +180,9 @@ mod tests {
         let hint = empty_hint(
             true,
             LearningScope::Repo,
-            &[PathBuf::from("/work/.commitcrafter/history.jsonl")],
+            &[PathBuf::from("/work/.commet/history.jsonl")],
         );
-        assert!(hint.contains("/work/.commitcrafter/history.jsonl"));
-        assert!(hint.contains("cc"));
+        assert!(hint.contains("/work/.commet/history.jsonl"));
+        assert!(hint.contains("commet"));
     }
 }

@@ -66,7 +66,7 @@ pub fn add(cwd: &Path, paths: &[&Path]) -> Result<()> {
 ///
 /// Used by the TUI's auto-unstage-on-abort path so when the user
 /// quits without committing, the index is returned to whatever it
-/// was before `cc` started.
+/// was before `commet` started.
 pub fn restore_staged(cwd: &Path, paths: &[&Path]) -> Result<()> {
     if paths.is_empty() {
         return Ok(());

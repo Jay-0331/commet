@@ -1,6 +1,6 @@
 //! Subcommand implementations.
 //!
-//! Each module owns the logic for one `cc` subcommand, kept out of
+//! Each module owns the logic for one `commet` subcommand, kept out of
 //! `main.rs` so the binary stays a thin dispatch layer over the
 //! library.
 

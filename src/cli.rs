@@ -3,15 +3,15 @@ use clap::{ArgGroup, Args, Parser, Subcommand, ValueEnum};
 /// AI-powered git commit message CLI with a ratatui TUI.
 #[derive(Debug, Parser)]
 #[command(
-    name = "cc",
-    bin_name = "cc",
+    name = "commet",
+    bin_name = "commet",
     version,
     about,
     long_about = None,
     propagate_version = true,
     after_help = "Environment:\n  \
         ANTHROPIC_API_KEY, OPENAI_API_KEY, OPENROUTER_API_KEY  read at runtime\n  \
-        COMMITCRAFTER_LOG=info,reqwest=warn                    log filter\n  \
+        COMMET_LOG=info,reqwest=warn                    log filter\n  \
         NO_COLOR=1                                             disable ANSI color"
 )]
 pub struct Cli {
@@ -238,7 +238,7 @@ mod tests {
 
     #[test]
     fn default_invocation_parses() {
-        let cli = Cli::try_parse_from(["cc"]).expect("bare `cc` should parse");
+        let cli = Cli::try_parse_from(["commet"]).expect("bare `commet` should parse");
         assert!(cli.command.is_none());
         assert!(!cli.generate.yes);
         assert_eq!(cli.generate.count, None);
@@ -247,7 +247,7 @@ mod tests {
     #[test]
     fn short_flags_parse() {
         let cli = Cli::try_parse_from([
-            "cc",
+            "commet",
             "-y",
             "-g",
             "3",
@@ -267,7 +267,7 @@ mod tests {
 
     #[test]
     fn yes_conflicts_with_clipboard() {
-        let err = Cli::try_parse_from(["cc", "-y", "-c"]).unwrap_err();
+        let err = Cli::try_parse_from(["commet", "-y", "-c"]).unwrap_err();
         assert!(
             err.kind() == clap::error::ErrorKind::ArgumentConflict,
             "expected ArgumentConflict, got {:?}",
@@ -277,7 +277,7 @@ mod tests {
 
     #[test]
     fn yes_conflicts_with_print() {
-        let err = Cli::try_parse_from(["cc", "-y", "--print"]).unwrap_err();
+        let err = Cli::try_parse_from(["commet", "-y", "--print"]).unwrap_err();
         assert!(
             err.kind() == clap::error::ErrorKind::ArgumentConflict,
             "expected ArgumentConflict, got {:?}",
@@ -287,7 +287,7 @@ mod tests {
 
     #[test]
     fn clipboard_and_print_also_conflict() {
-        let err = Cli::try_parse_from(["cc", "-c", "--print"]).unwrap_err();
+        let err = Cli::try_parse_from(["commet", "-c", "--print"]).unwrap_err();
         assert!(
             err.kind() == clap::error::ErrorKind::ArgumentConflict,
             "expected ArgumentConflict, got {:?}",
@@ -297,26 +297,26 @@ mod tests {
 
     #[test]
     fn generate_range_enforced() {
-        let too_many = Cli::try_parse_from(["cc", "-g", "6"]).unwrap_err();
+        let too_many = Cli::try_parse_from(["commet", "-g", "6"]).unwrap_err();
         assert_eq!(too_many.kind(), clap::error::ErrorKind::ValueValidation);
 
-        let zero = Cli::try_parse_from(["cc", "-g", "0"]).unwrap_err();
+        let zero = Cli::try_parse_from(["commet", "-g", "0"]).unwrap_err();
         assert_eq!(zero.kind(), clap::error::ErrorKind::ValueValidation);
     }
 
     #[test]
     fn message_format_accepts_dotted_values() {
-        let cli = Cli::try_parse_from(["cc", "-t", "conventional+body"]).unwrap();
+        let cli = Cli::try_parse_from(["commet", "-t", "conventional+body"]).unwrap();
         assert_eq!(cli.generate.format, Some(MessageFormat::ConventionalBody));
 
-        let cli = Cli::try_parse_from(["cc", "-t", "gitmoji"]).unwrap();
+        let cli = Cli::try_parse_from(["commet", "-t", "gitmoji"]).unwrap();
         assert_eq!(cli.generate.format, Some(MessageFormat::Gitmoji));
     }
 
     #[test]
     fn set_overrides_are_repeatable() {
         let cli = Cli::try_parse_from([
-            "cc",
+            "commet",
             "--set",
             "style.subject_max_len=50",
             "--set",
@@ -328,7 +328,7 @@ mod tests {
 
     #[test]
     fn doctor_subcommand_parses() {
-        let cli = Cli::try_parse_from(["cc", "doctor", "--full"]).unwrap();
+        let cli = Cli::try_parse_from(["commet", "doctor", "--full"]).unwrap();
         match cli.command {
             Some(Command::Doctor(args)) => assert!(args.full),
             other => panic!("expected Doctor, got {other:?}"),
@@ -337,13 +337,13 @@ mod tests {
 
     #[test]
     fn config_subcommands_parse() {
-        let cli = Cli::try_parse_from(["cc", "config", "show", "--json"]).unwrap();
+        let cli = Cli::try_parse_from(["commet", "config", "show", "--json"]).unwrap();
         match cli.command {
             Some(Command::Config(ConfigCmd::Show(args))) => assert!(args.json),
             other => panic!("expected config show, got {other:?}"),
         }
 
-        let cli = Cli::try_parse_from(["cc", "config", "edit", "--global"]).unwrap();
+        let cli = Cli::try_parse_from(["commet", "config", "edit", "--global"]).unwrap();
         match cli.command {
             Some(Command::Config(ConfigCmd::Edit(args))) => assert!(args.global),
             other => panic!("expected config edit, got {other:?}"),
@@ -352,19 +352,19 @@ mod tests {
 
     #[test]
     fn forget_requires_a_target() {
-        let err = Cli::try_parse_from(["cc", "forget"]).unwrap_err();
+        let err = Cli::try_parse_from(["commet", "forget"]).unwrap_err();
         assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
     }
 
     #[test]
     fn forget_targets_are_mutually_exclusive() {
-        let err = Cli::try_parse_from(["cc", "forget", "--all", "--last"]).unwrap_err();
+        let err = Cli::try_parse_from(["commet", "forget", "--all", "--last"]).unwrap_err();
         assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
     }
 
     #[test]
     fn history_defaults_to_last_20() {
-        let cli = Cli::try_parse_from(["cc", "history"]).unwrap();
+        let cli = Cli::try_parse_from(["commet", "history"]).unwrap();
         match cli.command {
             Some(Command::History(args)) => {
                 assert_eq!(args.last, 20);

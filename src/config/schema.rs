@@ -153,7 +153,7 @@ impl Default for OpenRouterConfig {
             max_tokens: 1024,
             temperature: 0.2,
             http_referer: String::new(),
-            x_title: "commitcrafter".into(),
+            x_title: "commet".into(),
             timeout_secs: DEFAULT_TIMEOUT_SECS,
             max_retries: DEFAULT_MAX_RETRIES,
         }
@@ -564,7 +564,7 @@ mod tests {
             model = "meta-llama/llama-3.1-70b-instruct"
             max_tokens = 1024
             temperature = 0.2
-            x_title = "commitcrafter"
+            x_title = "commet"
 
             [style]
             format = "conventional+body"

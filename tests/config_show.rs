@@ -9,10 +9,10 @@ use assert_cmd::Command;
 use tempfile::TempDir;
 
 fn cc(tmp: &TempDir) -> Command {
-    let mut cmd = Command::cargo_bin("cc").expect("cc binary");
+    let mut cmd = Command::cargo_bin("commet").expect("commet binary");
     cmd.current_dir(tmp.path())
         .env_remove("XDG_CONFIG_HOME")
-        .env_remove("COMMITCRAFTER_LOG")
+        .env_remove("COMMET_LOG")
         .env("HOME", tmp.path());
     cmd
 }

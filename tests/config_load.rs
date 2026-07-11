@@ -7,7 +7,7 @@
 
 use std::fs;
 
-use commitcrafter::config::{Layered, Source};
+use commet::config::{Layered, Source};
 
 fn write(path: &std::path::Path, text: &str) {
     fs::write(path, text).expect("write fixture");
@@ -60,7 +60,7 @@ fn global_file_overrides_defaults_end_to_end() {
 fn repo_file_overrides_global_end_to_end() {
     let tmp = tempfile::tempdir().unwrap();
     let global = tmp.path().join("global.toml");
-    let repo = tmp.path().join(".commitcrafter.toml");
+    let repo = tmp.path().join(".commet.toml");
     write(
         &global,
         r#"
@@ -107,7 +107,7 @@ fn repo_file_overrides_global_end_to_end() {
 fn full_precedence_chain_default_global_repo_flag_set() {
     let tmp = tempfile::tempdir().unwrap();
     let global = tmp.path().join("global.toml");
-    let repo = tmp.path().join(".commitcrafter.toml");
+    let repo = tmp.path().join(".commet.toml");
     write(
         &global,
         r#"
@@ -204,7 +204,7 @@ fn malformed_global_surfaces_file_path() {
 fn empty_files_yield_defaults() {
     let tmp = tempfile::tempdir().unwrap();
     let global = tmp.path().join("global.toml");
-    let repo = tmp.path().join(".commitcrafter.toml");
+    let repo = tmp.path().join(".commet.toml");
     write(&global, "");
     write(&repo, "");
 
@@ -216,7 +216,7 @@ fn empty_files_yield_defaults() {
         .load()
         .unwrap();
 
-    assert_eq!(loaded.config, commitcrafter::config::Config::default());
+    assert_eq!(loaded.config, commet::config::Config::default());
     // Every leaf still tagged as Default since nothing overrode anything.
     for (path, src) in loaded.sources.iter() {
         assert_eq!(src, &Source::Default, "leaf {path} unexpectedly {src:?}");

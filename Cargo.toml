@@ -1,20 +1,20 @@
 [package]
-name = "commitcrafter"
+name = "commet"
 version = "0.1.0"
 edition = "2024"
 description = "AI-powered git commit message CLI with a ratatui TUI"
 license = "MIT"
-repository = "https://github.com/Jay-0331/commitcrafter"
+repository = "https://github.com/Jay-0331/commet"
 readme = "README.md"
 categories = ["command-line-utilities", "development-tools"]
 keywords = ["git", "commit", "ai", "tui", "llm"]
 
 [[bin]]
-name = "cc"
+name = "commet"
 path = "src/main.rs"
 
 [lib]
-name = "commitcrafter"
+name = "commet"
 path = "src/lib.rs"
 
 [features]

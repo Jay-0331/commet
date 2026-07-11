@@ -3,9 +3,9 @@
 //! The crate's configuration is layered:
 //!
 //! 1. **Defaults** — values baked into [`schema::Config::default`].
-//! 2. **Global** — `$XDG_CONFIG_HOME/commitcrafter/config.toml` (or
-//!    `~/.config/commitcrafter/config.toml`).
-//! 3. **Repo** — `<repo-root>/.commitcrafter.toml`, discovered via
+//! 2. **Global** — `$XDG_CONFIG_HOME/commet/config.toml` (or
+//!    `~/.config/commet/config.toml`).
+//! 3. **Repo** — `<repo-root>/.commet.toml`, discovered via
 //!    `git rev-parse --show-toplevel`.
 //! 4. **CLI flags** — values derived from `--provider`, `--model`,
 //!    `--no-color`, `--type`. Constructed by the caller, fed in as a
@@ -20,7 +20,7 @@
 //! Tests typically construct one manually:
 //!
 //! ```no_run
-//! use commitcrafter::config::{Layered, Source};
+//! use commet::config::{Layered, Source};
 //!
 //! let loaded = Layered::new()
 //!     .with_global_file("/tmp/global.toml")

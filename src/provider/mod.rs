@@ -89,12 +89,12 @@ pub trait Provider: Send + Sync {
 
 /// The four builtin providers, keyed by [`Provider::name`].
 ///
-/// With the `mock` feature and `$COMMITCRAFTER_MOCK_RESPONSE` set, every
+/// With the `mock` feature and `$COMMET_MOCK_RESPONSE` set, every
 /// provider name resolves to the offline [`mock`] provider instead, so
 /// integration tests run deterministically without HTTP.
 pub fn registry() -> HashMap<&'static str, Box<dyn Provider>> {
     #[cfg(feature = "mock")]
-    if std::env::var_os("COMMITCRAFTER_MOCK_RESPONSE").is_some() {
+    if std::env::var_os("COMMET_MOCK_RESPONSE").is_some() {
         return mock::registry();
     }
 
@@ -109,7 +109,7 @@ pub fn registry() -> HashMap<&'static str, Box<dyn Provider>> {
 
 /// Serializes tests that mutate the process-global mock env vars against
 /// tests that read them through [`registry`] (relevant under the `mock`
-/// feature). Lock it in any test that sets `COMMITCRAFTER_MOCK_*` or
+/// feature). Lock it in any test that sets `COMMET_MOCK_*` or
 /// asserts on the builtin registry.
 #[cfg(test)]
 pub(crate) static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
