@@ -4,6 +4,7 @@ pub mod config;
 pub mod editor;
 pub mod error;
 pub mod git;
+pub mod learning;
 pub mod log;
 pub mod provider;
 pub mod tui;
