@@ -5,9 +5,11 @@
 //! restore) and the [`AppScreen`] state machine every screen renders
 //! through.
 
+pub mod spinner;
 pub mod terminal;
 pub mod theme;
 
+pub use spinner::{Spinner, SpinnerMsg};
 pub use terminal::{App, AppScreen, Tui, enter, leave};
 pub use theme::{ColorCap, Theme};
 
