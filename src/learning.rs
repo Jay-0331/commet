@@ -17,6 +17,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::config::schema::LearningScope;
 use crate::error::{Error, Result};
 
 /// Store filename under the commitcrafter state/repo directory.
@@ -154,6 +155,83 @@ fn archive_path(base: &Path, n: u32) -> PathBuf {
     let mut name = base.as_os_str().to_owned();
     name.push(format!(".{n}"));
     PathBuf::from(name)
+}
+
+/// The learning store as seen through a configured [`LearningScope`].
+///
+/// A `Store` resolves the repo and global store paths once, then gates
+/// every read/write by scope: `Off` touches nothing, `Repo`/`Global`
+/// touch one file, and `RepoGlobal` touches both (repo entries ranked
+/// first on read, both written on append).
+pub struct Store {
+    scope: LearningScope,
+    repo_path: Option<PathBuf>,
+    global_path: Option<PathBuf>,
+}
+
+impl Store {
+    /// Resolve store paths for `scope`. `repo_root` is the repository
+    /// root (`None` when not inside a repo); the global path comes from
+    /// the environment via [`global_store_path`].
+    pub fn open(scope: LearningScope, repo_root: Option<&Path>) -> Self {
+        Self::with_paths(scope, repo_root.map(repo_store_path), global_store_path())
+    }
+
+    /// Construct a store from explicit paths — the injection point for
+    /// tests and callers that resolve paths themselves.
+    pub fn with_paths(
+        scope: LearningScope,
+        repo_path: Option<PathBuf>,
+        global_path: Option<PathBuf>,
+    ) -> Self {
+        Self {
+            scope,
+            repo_path,
+            global_path,
+        }
+    }
+
+    /// Whether the scope enables the store at all (`scope != off`).
+    pub fn is_enabled(&self) -> bool {
+        !matches!(self.scope, LearningScope::Off)
+    }
+
+    /// The files this scope touches, repo before global. `Off` yields
+    /// none; a scope naming a file whose path is unresolved (e.g. `repo`
+    /// outside a repo) simply drops it.
+    fn active_paths(&self) -> Vec<&Path> {
+        let use_repo = matches!(self.scope, LearningScope::Repo | LearningScope::RepoGlobal);
+        let use_global = matches!(
+            self.scope,
+            LearningScope::Global | LearningScope::RepoGlobal
+        );
+
+        let mut paths = Vec::new();
+        if use_repo && let Some(p) = &self.repo_path {
+            paths.push(p.as_path());
+        }
+        if use_global && let Some(p) = &self.global_path {
+            paths.push(p.as_path());
+        }
+        paths
+    }
+
+    /// Load every in-scope record, repo entries first. `Off` → empty.
+    pub fn read(&self) -> Result<Vec<LearningRecord>> {
+        let mut records = Vec::new();
+        for path in self.active_paths() {
+            records.extend(load(path)?);
+        }
+        Ok(records)
+    }
+
+    /// Append `record` to every in-scope file. `Off` → no-op.
+    pub fn write(&self, record: &LearningRecord) -> Result<()> {
+        for path in self.active_paths() {
+            append(path, record)?;
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -308,5 +386,119 @@ mod tests {
     fn repo_path_is_under_dot_commitcrafter() {
         let p = repo_store_path(Path::new("/work/repo"));
         assert_eq!(p, PathBuf::from("/work/repo/.commitcrafter/history.jsonl"));
+    }
+
+    // ---------- Store (scope filter) ----------
+
+    /// Seed a repo + global file with a distinguishable record each and
+    /// return their paths.
+    fn seeded_layout() -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let dir = tempdir().unwrap();
+        let repo = dir.path().join("repo").join("history.jsonl");
+        let global = dir.path().join("global").join("history.jsonl");
+        append(&repo, &record("repo entry")).unwrap();
+        append(&global, &record("global entry")).unwrap();
+        (dir, repo, global)
+    }
+
+    #[test]
+    fn read_scope_off_reads_nothing() {
+        let (_d, repo, global) = seeded_layout();
+        let store = Store::with_paths(LearningScope::Off, Some(repo), Some(global));
+        assert!(store.read().unwrap().is_empty());
+        assert!(!store.is_enabled());
+    }
+
+    #[test]
+    fn read_scope_repo_reads_only_repo() {
+        let (_d, repo, global) = seeded_layout();
+        let store = Store::with_paths(LearningScope::Repo, Some(repo), Some(global));
+        let got = store.read().unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].edited_text, "repo entry");
+        assert!(store.is_enabled());
+    }
+
+    #[test]
+    fn read_scope_global_reads_only_global() {
+        let (_d, repo, global) = seeded_layout();
+        let store = Store::with_paths(LearningScope::Global, Some(repo), Some(global));
+        let got = store.read().unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].edited_text, "global entry");
+    }
+
+    #[test]
+    fn read_scope_repo_global_reads_both_repo_ranked_first() {
+        let (_d, repo, global) = seeded_layout();
+        let store = Store::with_paths(LearningScope::RepoGlobal, Some(repo), Some(global));
+        let got = store.read().unwrap();
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0].edited_text, "repo entry");
+        assert_eq!(got[1].edited_text, "global entry");
+    }
+
+    /// Fresh (unwritten) repo + global paths.
+    fn empty_layout() -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let dir = tempdir().unwrap();
+        let repo = dir.path().join("repo").join("history.jsonl");
+        let global = dir.path().join("global").join("history.jsonl");
+        (dir, repo, global)
+    }
+
+    #[test]
+    fn write_scope_off_writes_nothing() {
+        let (_d, repo, global) = empty_layout();
+        let store = Store::with_paths(LearningScope::Off, Some(repo.clone()), Some(global.clone()));
+        store.write(&record("x")).unwrap();
+        assert!(!repo.exists());
+        assert!(!global.exists());
+    }
+
+    #[test]
+    fn write_scope_repo_writes_only_repo() {
+        let (_d, repo, global) = empty_layout();
+        let store = Store::with_paths(
+            LearningScope::Repo,
+            Some(repo.clone()),
+            Some(global.clone()),
+        );
+        store.write(&record("x")).unwrap();
+        assert!(repo.exists());
+        assert!(!global.exists());
+    }
+
+    #[test]
+    fn write_scope_global_writes_only_global() {
+        let (_d, repo, global) = empty_layout();
+        let store = Store::with_paths(
+            LearningScope::Global,
+            Some(repo.clone()),
+            Some(global.clone()),
+        );
+        store.write(&record("x")).unwrap();
+        assert!(!repo.exists());
+        assert!(global.exists());
+    }
+
+    #[test]
+    fn write_scope_repo_global_writes_both() {
+        let (_d, repo, global) = empty_layout();
+        let store = Store::with_paths(
+            LearningScope::RepoGlobal,
+            Some(repo.clone()),
+            Some(global.clone()),
+        );
+        store.write(&record("x")).unwrap();
+        assert!(repo.exists());
+        assert!(global.exists());
+    }
+
+    #[test]
+    fn repo_scope_outside_a_repo_is_a_noop() {
+        // `repo` scope with no repo path resolved: nothing to read/write.
+        let store = Store::with_paths(LearningScope::Repo, None, global_store_path());
+        assert!(store.read().unwrap().is_empty());
+        store.write(&record("x")).unwrap(); // must not panic or error
     }
 }
