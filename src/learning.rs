@@ -196,6 +196,15 @@ impl Store {
         !matches!(self.scope, LearningScope::Off)
     }
 
+    /// The files this scope touches, as owned paths (repo before
+    /// global). Useful for user-facing hints (e.g. "looked in …").
+    pub fn paths(&self) -> Vec<PathBuf> {
+        self.active_paths()
+            .into_iter()
+            .map(Path::to_path_buf)
+            .collect()
+    }
+
     /// The files this scope touches, repo before global. `Off` yields
     /// none; a scope naming a file whose path is unresolved (e.g. `repo`
     /// outside a repo) simply drops it.

@@ -1,10 +1,13 @@
 use std::process::ExitCode;
 
 use clap::Parser;
-use commitcrafter::cli::{Cli, Command, ConfigCmd, ConfigEditArgs, ConfigShowArgs, ProvidersArgs};
+use commitcrafter::cli::{
+    Cli, Command, ConfigCmd, ConfigEditArgs, ConfigShowArgs, HistoryArgs, ProvidersArgs,
+};
 use commitcrafter::cmd;
 use commitcrafter::config::{Layered, Loaded, discover, edit, render_json, render_toml};
 use commitcrafter::error::Result;
+use commitcrafter::git;
 use commitcrafter::log;
 use tracing::{debug, info};
 
@@ -45,10 +48,7 @@ fn run() -> Result<()> {
             Ok(())
         }
         Some(Command::Providers(args)) => cmd_providers(args),
-        Some(Command::History(_)) => {
-            info!("history — not yet implemented");
-            Ok(())
-        }
+        Some(Command::History(args)) => cmd_history(args),
         Some(Command::Forget(_)) => {
             info!("forget — not yet implemented");
             Ok(())
@@ -89,6 +89,14 @@ fn cmd_config_edit(args: &ConfigEditArgs) -> Result<()> {
 fn cmd_providers(args: &ProvidersArgs) -> Result<()> {
     let loaded = load_layered_from_files()?;
     cmd::providers::run(&loaded.config, args)
+}
+
+/// Print recorded commit-message history, newest first.
+fn cmd_history(args: &HistoryArgs) -> Result<()> {
+    let loaded = load_layered_from_files()?;
+    let cwd = std::env::current_dir()?;
+    let repo_root = git::repo_root(&cwd).ok();
+    cmd::history::run(&loaded.config, args, repo_root.as_deref())
 }
 
 /// Load the effective config from defaults + config files, with no
