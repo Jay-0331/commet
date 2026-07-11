@@ -30,11 +30,7 @@ fn run() -> Result<()> {
     match &cli.command {
         Some(Command::Config(ConfigCmd::Show(args))) => cmd_config_show(&cli, args),
         Some(Command::Config(ConfigCmd::Edit(args))) => cmd_config_edit(args),
-        None => {
-            info!("(default) generate + commit — not yet implemented");
-            println!("commitcrafter: (no behavior yet — see issues #11–#70)");
-            Ok(())
-        }
+        None => cmd_generate(&cli),
         Some(Command::Setup(_)) => {
             info!("setup — not yet implemented");
             Ok(())
@@ -64,7 +60,7 @@ fn run() -> Result<()> {
 /// default command lands; until then, only `--set` overrides feed in
 /// from the CLI for `cc config show`.
 fn cmd_config_show(cli: &Cli, args: &ConfigShowArgs) -> Result<()> {
-    let loaded = load_layered_for_show(cli)?;
+    let loaded = load_layered_with_set(cli)?;
     let text = if args.json {
         render_json(&loaded)?
     } else {
@@ -99,6 +95,16 @@ fn cmd_history(args: &HistoryArgs) -> Result<()> {
     cmd::history::run(&loaded.config, args, repo_root.as_deref())
 }
 
+/// Default flow: generate a commit message from the staged diff and
+/// print or commit it. Reads config from files + `--set` (the other
+/// CLI overrides — `--provider`, `--model`, `-t`, `-g`, `-p` — are
+/// applied per-run inside the generate command).
+fn cmd_generate(cli: &Cli) -> Result<()> {
+    let loaded = load_layered_with_set(cli)?;
+    let cwd = std::env::current_dir()?;
+    cmd::generate::run(&loaded.config, &cli.generate, &cwd)
+}
+
 /// Load the effective config from defaults + config files, with no
 /// CLI-flag or `--set` layer.
 fn load_layered_from_files() -> Result<Loaded> {
@@ -118,7 +124,7 @@ fn load_layered_from_files() -> Result<Loaded> {
     layered.load()
 }
 
-fn load_layered_for_show(cli: &Cli) -> Result<Loaded> {
+fn load_layered_with_set(cli: &Cli) -> Result<Loaded> {
     let mut layered = Layered::new();
 
     if let Some(path) = discover::global_config_path()
