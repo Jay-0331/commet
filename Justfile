@@ -20,13 +20,14 @@ build-release:
 run *args:
     cargo run -- {{args}}
 
-# Run all tests (unit + integration + doc).
+# Run all tests (unit + integration + doc). `--all-features` matches CI
+# and enables the `mock` provider the e2e suite needs.
 test:
-    cargo test
+    cargo test --all-features
 
 # Run a single test by substring match (cargo test's built-in filter).
 test-one name:
-    cargo test {{name}}
+    cargo test --all-features {{name}}
 
 # Format every Rust file in the workspace.
 fmt:
