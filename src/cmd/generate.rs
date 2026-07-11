@@ -11,7 +11,7 @@
 //! message with a hint rather than committing, so nothing happens to
 //! the repo without `-y`.
 
-use std::io::Write;
+use std::io::{IsTerminal, Write};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -115,7 +115,7 @@ pub fn run(config: &Config, opts: &GenerateOpts, cwd: &Path) -> Result<()> {
         record_accepted(
             config,
             cwd,
-            &Accepted {
+            &RecordCtx {
                 provider: &provider_name,
                 model: &gen_opts.model,
                 format: style.format,
@@ -128,13 +128,106 @@ pub fn run(config: &Config, opts: &GenerateOpts, cwd: &Path) -> Result<()> {
         return Ok(());
     }
 
-    // No flag and no TUI yet: show the message, don't touch the repo.
+    // No flag: interactive preview on a real terminal; otherwise (piped
+    // output, CI) fall back to printing so scripting still works.
+    if std::io::stdout().is_terminal() {
+        return interactive_preview(
+            config,
+            opts,
+            cwd,
+            provider.as_ref(),
+            &request,
+            &candidates,
+            &Ctx {
+                provider: &provider_name,
+                model: &gen_opts.model,
+                temperature: gen_opts.temperature,
+                format: style.format,
+                files: &files,
+                diff: &shrunk,
+            },
+        );
+    }
+
     print!("{}", render_candidates(&candidates));
     if !render_candidates(&candidates).ends_with('\n') {
         println!();
     }
     eprintln!("\n(preview only — re-run with -y to commit, or --print for plain output)");
     Ok(())
+}
+
+/// Context threaded into the interactive preview and its learning record.
+struct Ctx<'a> {
+    provider: &'a str,
+    model: &'a str,
+    temperature: f32,
+    format: schema::MessageFormat,
+    files: &'a [String],
+    diff: &'a str,
+}
+
+/// Run the interactive preview: accept → commit + record, quit →
+/// user-abort, regenerate → re-query the provider, edit → `$EDITOR`.
+fn interactive_preview(
+    config: &Config,
+    opts: &GenerateOpts,
+    cwd: &Path,
+    provider: &dyn crate::provider::Provider,
+    request: &crate::provider::GenerateRequest,
+    candidates: &[String],
+    ctx: &Ctx,
+) -> Result<()> {
+    let cap = crate::tui::color_cap(config.ui.color, opts.no_color);
+    let theme = crate::tui::Theme::from_config(&config.ui, cap)
+        .map_err(|e| Error::Config(e.to_string()))?;
+
+    let state = crate::tui::PreviewState::new(
+        candidates.to_vec(),
+        ctx.provider,
+        ctx.model,
+        ctx.temperature,
+        config.style.body_wrap as u16,
+    );
+
+    let outcome = crate::tui::run_preview(
+        state,
+        theme,
+        || provider.generate(request).map_err(|e| e.to_string()),
+        |text| edit_in_editor(text).map_err(|e| e.to_string()),
+    )?;
+
+    match outcome {
+        crate::tui::PreviewOutcome::Accepted(acc) => {
+            commit(cwd, &acc.message, opts.no_verify)?;
+            record_accepted(
+                config,
+                cwd,
+                &RecordCtx {
+                    provider: ctx.provider,
+                    model: ctx.model,
+                    format: ctx.format,
+                    candidates: &acc.candidates,
+                    accepted_index: acc.index,
+                    files: ctx.files,
+                    diff: ctx.diff,
+                },
+            );
+            Ok(())
+        }
+        crate::tui::PreviewOutcome::Aborted => Err(Error::UserAbort),
+    }
+}
+
+/// Write `text` to a tempfile, open `$EDITOR` on it, and return the
+/// edited contents (trailing whitespace trimmed).
+fn edit_in_editor(text: &str) -> Result<String> {
+    let mut file = tempfile::Builder::new().suffix(".txt").tempfile()?;
+    file.write_all(text.as_bytes())?;
+    file.flush()?;
+    crate::editor::spawn(file.path())?;
+    let edited = std::fs::read_to_string(file.path())?;
+    Ok(edited.trim_end().to_string())
 }
 
 /// Resolve the effective message format: the `-t/--type` flag wins over
@@ -228,7 +321,7 @@ fn render_candidates(candidates: &[String]) -> String {
 }
 
 /// The data recorded to the learning store on an accepted commit.
-struct Accepted<'a> {
+struct RecordCtx<'a> {
     provider: &'a str,
     model: &'a str,
     format: schema::MessageFormat,
@@ -241,7 +334,7 @@ struct Accepted<'a> {
 /// Append a [`LearningRecord`] for an accepted commit. Best-effort:
 /// respects `[learning].enabled` + scope, and a write failure is logged
 /// rather than surfaced — the commit already succeeded.
-fn record_accepted(config: &Config, cwd: &Path, acc: &Accepted) {
+fn record_accepted(config: &Config, cwd: &Path, acc: &RecordCtx) {
     if !config.learning.enabled {
         return;
     }
