@@ -17,6 +17,11 @@ path = "src/main.rs"
 name = "commitcrafter"
 path = "src/lib.rs"
 
+[features]
+# Compile the offline env-driven mock provider into the library so
+# integration tests (and `cargo run --features mock`) can bypass HTTP.
+mock = []
+
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 globset = "0.4"
