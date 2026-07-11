@@ -34,6 +34,20 @@ pub fn diff_staged(cwd: &Path) -> Result<String> {
     run(cwd, &[OsStr::new("diff"), OsStr::new("--cached")])
 }
 
+/// Current branch name via `git rev-parse --abbrev-ref HEAD`. Returns
+/// `"HEAD"` on a detached head; errors before the first commit.
+pub fn current_branch(cwd: &Path) -> Result<String> {
+    let out = run(
+        cwd,
+        &[
+            OsStr::new("rev-parse"),
+            OsStr::new("--abbrev-ref"),
+            OsStr::new("HEAD"),
+        ],
+    )?;
+    Ok(out.trim().to_string())
+}
+
 /// Stage one or more paths via `git add -- <paths…>`.
 ///
 /// Uses the `--` separator so a path that happens to look like a
