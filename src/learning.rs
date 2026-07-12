@@ -132,6 +132,67 @@ pub fn load(path: &Path) -> Result<Vec<LearningRecord>> {
     Ok(records)
 }
 
+/// Delete a store file and all of its rotated archives (`.1`..`.3`).
+/// Returns whether anything was removed (for "nothing to forget"
+/// detection). Full wipe, so archived history is cleared too.
+pub fn clear(path: &Path) -> Result<bool> {
+    let mut removed = false;
+    for candidate in std::iter::once(path.to_path_buf())
+        .chain((1..=KEEP_ARCHIVES).map(|n| archive_path(path, n)))
+    {
+        if candidate.exists() {
+            fs::remove_file(&candidate)?;
+            removed = true;
+        }
+    }
+    Ok(removed)
+}
+
+/// Overwrite `path` with exactly `records` (one JSON line each), or
+/// delete it when `records` is empty.
+fn rewrite(path: &Path, records: &[LearningRecord]) -> Result<()> {
+    if records.is_empty() {
+        clear(path)?;
+        return Ok(());
+    }
+    let mut out = String::new();
+    for record in records {
+        let line = serde_json::to_string(record)
+            .map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))?;
+        out.push_str(&line);
+        out.push('\n');
+    }
+    fs::write(path, out)?;
+    Ok(())
+}
+
+/// Drop the single most-recent record across `paths` (by timestamp,
+/// ties → last appended), rewriting the file it lived in. Returns
+/// whether a record was removed.
+pub fn drop_last(paths: &[PathBuf]) -> Result<bool> {
+    let loaded: Vec<Vec<LearningRecord>> = paths.iter().map(|p| load(p)).collect::<Result<_>>()?;
+
+    let mut best: Option<(usize, usize)> = None; // (file, record)
+    for (pi, records) in loaded.iter().enumerate() {
+        for (ri, record) in records.iter().enumerate() {
+            let newer = best
+                .map(|(bp, br)| record.ts >= loaded[bp][br].ts)
+                .unwrap_or(true);
+            if newer {
+                best = Some((pi, ri));
+            }
+        }
+    }
+
+    let Some((pi, ri)) = best else {
+        return Ok(false);
+    };
+    let mut records = loaded[pi].clone();
+    records.remove(ri);
+    rewrite(&paths[pi], &records)?;
+    Ok(true)
+}
+
 /// If `path` is over `max_bytes`, shift archives (`.2`→`.3`, `.1`→`.2`,
 /// dropping the old `.3`) and move the live file to `.1`. The next
 /// [`append`] recreates the live file.
@@ -416,6 +477,44 @@ mod tests {
             PathBuf::from("/home/u/.local/state/commet/history.jsonl")
         );
         assert!(global_store_path_with(Some(""), None).is_none());
+    }
+
+    #[test]
+    fn clear_removes_live_file_and_archives() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("history.jsonl");
+        // live + rotate to .1 by exceeding a tiny threshold.
+        append_with_limit(&path, &record("one"), 10).unwrap();
+        append_with_limit(&path, &record("two"), 10).unwrap();
+        assert!(archive_path(&path, 1).exists());
+
+        assert!(clear(&path).unwrap());
+        assert!(!path.exists());
+        assert!(!archive_path(&path, 1).exists());
+        // Nothing left to clear.
+        assert!(!clear(&path).unwrap());
+    }
+
+    #[test]
+    fn drop_last_removes_only_the_newest_record() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("history.jsonl");
+        for i in 1..=3 {
+            let mut r = record(&format!("m{i}"));
+            r.ts = format!("2026-07-12T00:00:0{i}Z");
+            append(&path, &r).unwrap();
+        }
+
+        assert!(drop_last(std::slice::from_ref(&path)).unwrap());
+        let left = load(&path).unwrap();
+        assert_eq!(left.len(), 2);
+        assert!(left.iter().all(|r| r.edited_text != "m3")); // newest gone
+        assert_eq!(left[0].edited_text, "m1");
+
+        // Draining to empty deletes the file; then nothing to drop.
+        assert!(drop_last(std::slice::from_ref(&path)).unwrap());
+        assert!(drop_last(std::slice::from_ref(&path)).unwrap());
+        assert!(!drop_last(&[path]).unwrap());
     }
 
     #[test]

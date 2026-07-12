@@ -2,7 +2,7 @@ use std::process::ExitCode;
 
 use clap::Parser;
 use commet::cli::{
-    Cli, Command, ConfigCmd, ConfigEditArgs, ConfigShowArgs, HistoryArgs, ProvidersArgs,
+    Cli, Command, ConfigCmd, ConfigEditArgs, ConfigShowArgs, ForgetArgs, HistoryArgs, ProvidersArgs,
 };
 use commet::cmd;
 use commet::config::{Layered, Loaded, discover, edit, render_json, render_toml};
@@ -45,10 +45,7 @@ fn run() -> Result<()> {
         }
         Some(Command::Providers(args)) => cmd_providers(args),
         Some(Command::History(args)) => cmd_history(args),
-        Some(Command::Forget(_)) => {
-            info!("forget — not yet implemented");
-            Ok(())
-        }
+        Some(Command::Forget(args)) => cmd_forget(args),
     }
 }
 
@@ -93,6 +90,13 @@ fn cmd_history(args: &HistoryArgs) -> Result<()> {
     let cwd = std::env::current_dir()?;
     let repo_root = git::repo_root(&cwd).ok();
     cmd::history::run(&loaded.config, args, repo_root.as_deref())
+}
+
+/// Wipe learning history at the chosen granularity.
+fn cmd_forget(args: &ForgetArgs) -> Result<()> {
+    let loaded = load_layered_from_files()?;
+    let cwd = std::env::current_dir()?;
+    cmd::forget::run(&loaded.config, args, &cwd)
 }
 
 /// Default flow: generate a commit message from the staged diff and
