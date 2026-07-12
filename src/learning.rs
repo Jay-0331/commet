@@ -85,9 +85,43 @@ pub fn global_store_path_with(xdg_state_home: Option<&str>, home: Option<&str>) 
     )
 }
 
+/// Per-repo store directory, and the line written to `.gitignore`.
+const REPO_STORE_DIR: &str = ".commet";
+const GITIGNORE_ENTRY: &str = ".commet/";
+
 /// Per-repo store path: `<repo_root>/.commet/history.jsonl`.
 pub fn repo_store_path(repo_root: &Path) -> PathBuf {
-    repo_root.join(".commet").join(STORE_FILE)
+    repo_root.join(REPO_STORE_DIR).join(STORE_FILE)
+}
+
+/// Ensure the per-repo store dir is excluded by the repo's `.gitignore`
+/// so history never gets committed. Creates `.gitignore` if absent,
+/// appends the entry (with a comment) if not already present, no-op when
+/// it exists. Skips silently when `repo_root` has no `.git`. Returns
+/// whether an entry was added.
+pub fn ensure_gitignored(repo_root: &Path) -> Result<bool> {
+    if !repo_root.join(".git").exists() {
+        return Ok(false); // not a working tree (bare / missing) — nothing to do
+    }
+
+    let gitignore = repo_root.join(".gitignore");
+    let existing = fs::read_to_string(&gitignore).unwrap_or_default();
+    if existing
+        .lines()
+        .any(|l| matches!(l.trim(), GITIGNORE_ENTRY | REPO_STORE_DIR))
+    {
+        return Ok(false);
+    }
+
+    let mut out = existing;
+    if !out.is_empty() && !out.ends_with('\n') {
+        out.push('\n');
+    }
+    out.push_str("\n# commet: per-repo commit-message history (do not commit)\n");
+    out.push_str(GITIGNORE_ENTRY);
+    out.push('\n');
+    fs::write(&gitignore, out)?;
+    Ok(true)
 }
 
 /// Append one record as a JSON line to `path`, creating parent
@@ -477,6 +511,50 @@ mod tests {
             PathBuf::from("/home/u/.local/state/commet/history.jsonl")
         );
         assert!(global_store_path_with(Some(""), None).is_none());
+    }
+
+    /// Make `dir` look like a git working tree.
+    fn git_init(dir: &std::path::Path) {
+        fs::create_dir_all(dir.join(".git")).unwrap();
+    }
+
+    #[test]
+    fn ensure_gitignored_creates_file_when_missing() {
+        let d = tempdir().unwrap();
+        git_init(d.path());
+        assert!(ensure_gitignored(d.path()).unwrap());
+        let gi = fs::read_to_string(d.path().join(".gitignore")).unwrap();
+        assert!(gi.contains(".commet/"));
+        assert!(gi.contains("# commet:"));
+    }
+
+    #[test]
+    fn ensure_gitignored_no_duplicate_when_present() {
+        let d = tempdir().unwrap();
+        git_init(d.path());
+        fs::write(d.path().join(".gitignore"), "target/\n.commet/\n").unwrap();
+        assert!(!ensure_gitignored(d.path()).unwrap());
+        let gi = fs::read_to_string(d.path().join(".gitignore")).unwrap();
+        assert_eq!(gi.matches(".commet/").count(), 1);
+    }
+
+    #[test]
+    fn ensure_gitignored_appends_to_existing_file() {
+        let d = tempdir().unwrap();
+        git_init(d.path());
+        fs::write(d.path().join(".gitignore"), "target/").unwrap(); // no trailing newline
+        assert!(ensure_gitignored(d.path()).unwrap());
+        let gi = fs::read_to_string(d.path().join(".gitignore")).unwrap();
+        assert!(gi.starts_with("target/\n"));
+        assert!(gi.contains(".commet/"));
+    }
+
+    #[test]
+    fn ensure_gitignored_skips_without_git() {
+        let d = tempdir().unwrap();
+        // no .git
+        assert!(!ensure_gitignored(d.path()).unwrap());
+        assert!(!d.path().join(".gitignore").exists());
     }
 
     #[test]
