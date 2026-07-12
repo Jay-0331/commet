@@ -252,6 +252,8 @@ pub struct Learning {
     pub max_examples: u32,
     pub store_diffs: bool,
     pub store_path: String,
+    /// Auto-append the per-repo store dir to the repo's `.gitignore`.
+    pub auto_gitignore: bool,
 }
 
 impl Default for Learning {
@@ -262,6 +264,7 @@ impl Default for Learning {
             max_examples: 5,
             store_diffs: false,
             store_path: String::new(),
+            auto_gitignore: true,
         }
     }
 }
@@ -422,6 +425,7 @@ pub(crate) const KNOWN_KEYS: &[&str] = &[
     "git.diff_max_bytes",
     "git.ignore_paths",
     "learning",
+    "learning.auto_gitignore",
     "learning.enabled",
     "learning.max_examples",
     "learning.scope",

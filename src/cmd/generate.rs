@@ -369,6 +369,21 @@ fn record_accepted(config: &Config, cwd: &Path, acc: &RecordCtx) {
 
     if let Err(e) = store.write(&record) {
         tracing::warn!(error = %e, "failed to record accepted commit to learning store");
+        return;
+    }
+
+    // Keep the per-repo store out of version control. Only relevant when
+    // the scope actually writes a repo file.
+    let writes_repo = matches!(
+        config.learning.scope,
+        schema::LearningScope::Repo | schema::LearningScope::RepoGlobal
+    );
+    if config.learning.auto_gitignore
+        && writes_repo
+        && let Some(root) = repo_root.as_deref()
+        && let Err(e) = crate::learning::ensure_gitignored(root)
+    {
+        tracing::warn!(error = %e, "failed to update .gitignore for the learning store");
     }
 }
 
