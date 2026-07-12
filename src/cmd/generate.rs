@@ -92,6 +92,7 @@ pub fn run(config: &Config, opts: &GenerateOpts, cwd: &Path) -> Result<()> {
         temperature,
         n,
         extra_prompt: resolve_extra(opts.prompt.as_deref(), &config.style.extra_prompt),
+        examples: learned_examples(config, cwd, style.format),
     };
 
     let request = prompt::build(&style, &shrunk, &files, &gen_opts);
@@ -369,6 +370,20 @@ fn record_accepted(config: &Config, cwd: &Path, acc: &RecordCtx) {
     if let Err(e) = store.write(&record) {
         tracing::warn!(error = %e, "failed to record accepted commit to learning store");
     }
+}
+
+/// Recent accepted messages to seed the prompt (learning loop). Empty
+/// when learning is disabled or the store read fails — best-effort, so
+/// history problems never block generation.
+fn learned_examples(config: &Config, cwd: &Path, format: schema::MessageFormat) -> Vec<String> {
+    if !config.learning.enabled {
+        return Vec::new();
+    }
+    let repo_root = git::repo_root(cwd).ok();
+    let store = Store::open(config.learning.scope, repo_root.as_deref());
+    store
+        .load_examples(format_name(format), config.learning.max_examples as usize)
+        .unwrap_or_default()
 }
 
 /// Config-file spelling of a message format, for the stored record.

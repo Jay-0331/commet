@@ -11,6 +11,7 @@
 //! future prompts — archives are kept for `cc history` but never loaded
 //! into a prompt.
 
+use std::collections::HashSet;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -241,6 +242,32 @@ impl Store {
         }
         Ok(())
     }
+
+    /// Up to `max` most-recent accepted messages matching `format`,
+    /// de-duplicated by text — few-shot examples for the prompt.
+    pub fn load_examples(&self, format: &str, max: usize) -> Result<Vec<String>> {
+        Ok(select_examples(&self.read()?, format, max))
+    }
+}
+
+/// From oldest→newest `records`, take the `max` most recent accepted
+/// messages whose `format` matches, de-duplicated by `edited_text`
+/// (keeping the newest occurrence). Returned newest-first.
+pub fn select_examples(records: &[LearningRecord], format: &str, max: usize) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for record in records.iter().rev() {
+        if record.format != format {
+            continue;
+        }
+        if seen.insert(record.edited_text.as_str()) {
+            out.push(record.edited_text.clone());
+            if out.len() == max {
+                break;
+            }
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -389,6 +416,28 @@ mod tests {
             PathBuf::from("/home/u/.local/state/commet/history.jsonl")
         );
         assert!(global_store_path_with(Some(""), None).is_none());
+    }
+
+    #[test]
+    fn select_examples_dedups_newest_first_and_filters_format() {
+        let mut recs = Vec::new();
+        for (fmt, text) in [
+            ("conventional", "feat: a"), // oldest
+            ("gitmoji", "✨ b"),
+            ("conventional", "feat: a"), // duplicate, newer
+            ("conventional", "fix: c"),  // newest conventional
+        ] {
+            let mut r = record(text);
+            r.format = fmt.into();
+            recs.push(r);
+        }
+
+        assert_eq!(
+            select_examples(&recs, "conventional", 5),
+            vec!["fix: c".to_string(), "feat: a".to_string()]
+        );
+        assert_eq!(select_examples(&recs, "conventional", 1), vec!["fix: c"]);
+        assert!(select_examples(&recs, "plain", 5).is_empty());
     }
 
     #[test]

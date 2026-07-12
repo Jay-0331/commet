@@ -14,20 +14,23 @@ use crate::provider::GenerateRequest;
 /// Per-run generation parameters, separate from the durable `[style]`
 /// config. `extra_prompt` is appended to the system prompt under a
 /// `USER OVERRIDE` header (the `-p` flag / `[style].extra_prompt`).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct GenOpts {
     pub model: String,
     pub max_tokens: u32,
     pub temperature: f32,
     pub n: u8,
     pub extra_prompt: Option<String>,
+    /// Recent accepted messages from this project (learning loop), shown
+    /// to the model as a house-style reference. Empty = section omitted.
+    pub examples: Vec<String>,
 }
 
 /// Assemble a [`GenerateRequest`] from style config, the diff, the list
 /// of changed files, and the per-run options.
 pub fn build(style: &Style, diff: &str, files: &[String], opts: &GenOpts) -> GenerateRequest {
     GenerateRequest {
-        system_prompt: system_prompt(style, opts.extra_prompt.as_deref()),
+        system_prompt: system_prompt(style, &opts.examples, opts.extra_prompt.as_deref()),
         user_prompt: user_prompt(diff, files),
         model: opts.model.clone(),
         max_tokens: opts.max_tokens,
@@ -36,13 +39,15 @@ pub fn build(style: &Style, diff: &str, files: &[String], opts: &GenOpts) -> Gen
     }
 }
 
-/// Build the system prompt: role, format rules, length limits,
-/// examples, output contract, and any user override.
-pub fn system_prompt(style: &Style, extra: Option<&str>) -> String {
+/// Build the system prompt: role, format rules, length limits, style
+/// examples, recent-commit examples (`learned`), output contract, and
+/// any user override.
+pub fn system_prompt(style: &Style, learned: &[String], extra: Option<&str>) -> String {
     // Custom format hands the whole system prompt to the user (falling
     // back to the plain rules if they left it empty).
     if style.format == MessageFormat::Custom && !style.custom.system_prompt.trim().is_empty() {
         let mut s = style.custom.system_prompt.trim().to_string();
+        append_learned(&mut s, learned);
         append_override(&mut s, extra);
         return s;
     }
@@ -77,6 +82,8 @@ pub fn system_prompt(style: &Style, extra: Option<&str>) -> String {
         }
     }
 
+    append_learned(&mut s, learned);
+
     s.push_str(
         "\n\nOutput ONLY the commit message text — no preamble, no explanation, no code fences, \
          no surrounding quotes.",
@@ -84,6 +91,18 @@ pub fn system_prompt(style: &Style, extra: Option<&str>) -> String {
 
     append_override(&mut s, extra);
     s
+}
+
+/// Append the recent-commits section, or nothing when the list is empty.
+fn append_learned(s: &mut String, learned: &[String]) {
+    if learned.is_empty() {
+        return;
+    }
+    s.push_str("\n\n## Recent commits from this project\nMatch their voice and conventions:");
+    for example in learned {
+        s.push_str("\n- ");
+        s.push_str(example);
+    }
 }
 
 /// The format-specific rules block.
@@ -175,7 +194,7 @@ mod tests {
 
     #[test]
     fn conventional_lists_allowed_types_and_length_limit() {
-        let sp = system_prompt(&style(MessageFormat::Conventional), None);
+        let sp = system_prompt(&style(MessageFormat::Conventional), &[], None);
         assert!(sp.contains("Conventional Commits"));
         assert!(sp.contains("feat"));
         assert!(sp.contains("72 characters")); // default subject_max_len
@@ -184,15 +203,15 @@ mod tests {
 
     #[test]
     fn conventional_body_forces_a_body() {
-        let sp = system_prompt(&style(MessageFormat::ConventionalBody), None);
+        let sp = system_prompt(&style(MessageFormat::ConventionalBody), &[], None);
         assert!(sp.contains("Always include a body"));
     }
 
     #[test]
     fn gitmoji_and_subject_body_have_their_rules() {
-        assert!(system_prompt(&style(MessageFormat::Gitmoji), None).contains("gitmoji"));
+        assert!(system_prompt(&style(MessageFormat::Gitmoji), &[], None).contains("gitmoji"));
         assert!(
-            system_prompt(&style(MessageFormat::SubjectBody), None)
+            system_prompt(&style(MessageFormat::SubjectBody), &[], None)
                 .contains("blank line, then a body")
         );
     }
@@ -201,7 +220,7 @@ mod tests {
     fn custom_uses_the_configured_system_prompt() {
         let mut s = style(MessageFormat::Custom);
         s.custom.system_prompt = "MY CUSTOM RULES".into();
-        let sp = system_prompt(&s, None);
+        let sp = system_prompt(&s, &[], None);
         assert!(sp.starts_with("MY CUSTOM RULES"));
         // The generic rules are not appended over a custom prompt.
         assert!(!sp.contains("Conventional Commits"));
@@ -209,37 +228,41 @@ mod tests {
 
     #[test]
     fn empty_custom_prompt_falls_back_to_plain_rules() {
-        let sp = system_prompt(&style(MessageFormat::Custom), None);
+        let sp = system_prompt(&style(MessageFormat::Custom), &[], None);
         assert!(sp.contains("concise sentence"));
         assert!(sp.contains("Output ONLY"));
     }
 
     #[test]
     fn extra_prompt_appended_under_user_override() {
-        let sp = system_prompt(&style(MessageFormat::Plain), Some("use British spelling"));
+        let sp = system_prompt(
+            &style(MessageFormat::Plain),
+            &[],
+            Some("use British spelling"),
+        );
         assert!(sp.contains("USER OVERRIDE"));
         assert!(sp.contains("use British spelling"));
         // Empty / whitespace extra adds nothing.
-        let sp2 = system_prompt(&style(MessageFormat::Plain), Some("   "));
+        let sp2 = system_prompt(&style(MessageFormat::Plain), &[], Some("   "));
         assert!(!sp2.contains("USER OVERRIDE"));
     }
 
     #[test]
     fn examples_included_when_present_and_omitted_when_empty() {
-        let with = system_prompt(&style(MessageFormat::Plain), None);
+        let with = system_prompt(&style(MessageFormat::Plain), &[], None);
         assert!(with.contains("Examples of the desired style"));
         assert!(with.contains("feat(auth): add OAuth device flow"));
 
         let mut bare = style(MessageFormat::Plain);
         bare.examples.clear();
-        assert!(!system_prompt(&bare, None).contains("Examples of the desired style"));
+        assert!(!system_prompt(&bare, &[], None).contains("Examples of the desired style"));
     }
 
     #[test]
     fn include_body_false_says_subject_only() {
         let mut s = style(MessageFormat::Plain);
         s.include_body = false;
-        assert!(system_prompt(&s, None).contains("only the subject line"));
+        assert!(system_prompt(&s, &[], None).contains("only the subject line"));
     }
 
     #[test]
@@ -269,7 +292,7 @@ mod tests {
             max_tokens: 512,
             temperature: 0.3,
             n: 3,
-            extra_prompt: None,
+            ..GenOpts::default()
         };
         let req = build(&style(MessageFormat::Conventional), "the diff", &[], &opts);
         assert_eq!(req.model, "claude-sonnet-4-6");
@@ -277,5 +300,38 @@ mod tests {
         assert_eq!(req.max_tokens, 512);
         assert!(req.system_prompt.contains("Conventional Commits"));
         assert!(req.user_prompt.contains("the diff"));
+    }
+
+    #[test]
+    fn learned_examples_add_a_recent_commits_section_in_order() {
+        let learned = vec!["feat: newest".to_string(), "fix: older".to_string()];
+        let sp = system_prompt(&style(MessageFormat::Plain), &learned, None);
+        assert!(sp.contains("## Recent commits from this project"));
+        // Order preserved.
+        let newest = sp.find("feat: newest").unwrap();
+        let older = sp.find("fix: older").unwrap();
+        assert!(newest < older);
+        // Section sits before the output contract and any override.
+        assert!(sp.find("## Recent commits").unwrap() < sp.find("Output ONLY").unwrap());
+    }
+
+    #[test]
+    fn no_recent_commits_section_when_empty() {
+        let sp = system_prompt(&style(MessageFormat::Plain), &[], None);
+        assert!(!sp.contains("Recent commits from this project"));
+    }
+
+    #[test]
+    fn build_threads_examples_into_the_prompt() {
+        let opts = GenOpts {
+            examples: vec!["chore: bump deps".into()],
+            ..GenOpts::default()
+        };
+        let req = build(&style(MessageFormat::Plain), "d", &[], &opts);
+        assert!(req.system_prompt.contains("chore: bump deps"));
+        assert!(
+            req.system_prompt
+                .contains("Recent commits from this project")
+        );
     }
 }
