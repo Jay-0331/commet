@@ -1,6 +1,7 @@
 pub mod cli;
 pub mod cmd;
 pub mod config;
+pub mod doctor;
 pub mod editor;
 pub mod error;
 pub mod git;
