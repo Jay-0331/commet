@@ -4,6 +4,7 @@
 //! `main.rs` so the binary stays a thin dispatch layer over the
 //! library.
 
+pub mod doctor;
 pub mod forget;
 pub mod generate;
 pub mod history;

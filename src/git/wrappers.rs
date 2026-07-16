@@ -12,6 +12,11 @@ use std::process::Command;
 
 use crate::error::{Error, Result};
 
+/// Return `git --version` output.
+pub fn version() -> Result<String> {
+    run(Path::new("."), &[OsStr::new("--version")]).map(|out| out.trim().to_string())
+}
+
 /// Locate the repository root containing `cwd` via
 /// `git rev-parse --show-toplevel`. Returns [`Error::Git`] when not
 /// inside a repo.
