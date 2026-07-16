@@ -9,3 +9,4 @@ pub mod forget;
 pub mod generate;
 pub mod history;
 pub mod providers;
+pub mod setup;
