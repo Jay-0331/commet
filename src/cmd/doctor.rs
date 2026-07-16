@@ -16,6 +16,41 @@ use super::providers;
 
 /// Probe the real process environment and run the command.
 pub fn run(args: &DoctorArgs, cwd: &Path) -> Result<()> {
+    let report = collect(args, cwd);
+    let out = if args.json {
+        render_json(&report.results)
+    } else {
+        render_human(&report.results, report.unicode)
+    };
+    print!("{out}");
+    if !out.ends_with('\n') {
+        println!();
+    }
+    report.into_result()
+}
+
+/// Collected doctor results without any output. Setup uses this to render the
+/// identical checks inside its persistent TUI screen.
+pub struct DoctorReport {
+    pub results: Vec<CheckResult>,
+    pub unicode: bool,
+}
+
+impl DoctorReport {
+    pub fn has_failures(&self) -> bool {
+        self.results.iter().any(CheckResult::is_fail)
+    }
+
+    pub fn into_result(self) -> Result<()> {
+        if self.has_failures() {
+            Err(Error::Doctor)
+        } else {
+            Ok(())
+        }
+    }
+}
+
+pub fn collect(args: &DoctorArgs, cwd: &Path) -> DoctorReport {
     let (config, config_error, repo_config_error) = load_config_snapshot(cwd);
     let repo_root = git::repo_root(cwd).ok();
     let registry = provider::registry();
@@ -69,11 +104,19 @@ pub fn run(args: &DoctorArgs, cwd: &Path) -> Result<()> {
         None => doctor::smoke_skipped("the configured provider is not registered"),
     });
 
-    execute(&ctx, args, config.ui.unicode, smoke_result)
+    let mut results = doctor::run_all(&ctx);
+    if let Some(result) = smoke_result {
+        results.push(result);
+    }
+    DoctorReport {
+        results,
+        unicode: config.ui.unicode,
+    }
 }
 
 /// Render already-probed checks. Kept separate so failure/exit behavior is
 /// tested without mutating process-global environment variables.
+#[cfg(test)]
 fn execute(
     ctx: &CheckCtx,
     args: &DoctorArgs,
