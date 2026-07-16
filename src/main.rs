@@ -2,7 +2,8 @@ use std::process::ExitCode;
 
 use clap::Parser;
 use commet::cli::{
-    Cli, Command, ConfigCmd, ConfigEditArgs, ConfigShowArgs, ForgetArgs, HistoryArgs, ProvidersArgs,
+    Cli, Command, ConfigCmd, ConfigEditArgs, ConfigShowArgs, DoctorArgs, ForgetArgs, HistoryArgs,
+    ProvidersArgs,
 };
 use commet::cmd;
 use commet::config::{Layered, Loaded, discover, edit, render_json, render_toml};
@@ -39,10 +40,7 @@ fn run() -> Result<()> {
             info!("init — not yet implemented");
             Ok(())
         }
-        Some(Command::Doctor(_)) => {
-            info!("doctor — not yet implemented");
-            Ok(())
-        }
+        Some(Command::Doctor(args)) => cmd_doctor(args),
         Some(Command::Providers(args)) => cmd_providers(args),
         Some(Command::History(args)) => cmd_history(args),
         Some(Command::Forget(args)) => cmd_forget(args),
@@ -82,6 +80,12 @@ fn cmd_config_edit(args: &ConfigEditArgs) -> Result<()> {
 fn cmd_providers(args: &ProvidersArgs) -> Result<()> {
     let loaded = load_layered_from_files()?;
     cmd::providers::run(&loaded.config, args)
+}
+
+/// Probe the current environment and report actionable health checks.
+fn cmd_doctor(args: &DoctorArgs) -> Result<()> {
+    let cwd = std::env::current_dir()?;
+    cmd::doctor::run(args, &cwd)
 }
 
 /// Print recorded commit-message history, newest first.

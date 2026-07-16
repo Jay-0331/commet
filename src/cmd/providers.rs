@@ -112,6 +112,16 @@ fn evaluate(client: &HttpClient, probe: &Probe) -> ProviderStatus {
     }
 }
 
+/// Probe only the configured provider. Shared with `commet doctor` so
+/// both commands use the same endpoint and timeout policy.
+pub(super) fn selected_reachable(config: &Config, provider: &str) -> Option<bool> {
+    let probe = probes(config)
+        .into_iter()
+        .find(|probe| probe.provider == provider)?;
+    let client = HttpClient::new(REACHABILITY_TIMEOUT, 0);
+    Some(evaluate(&client, &probe).reachable)
+}
+
 /// Should output carry ANSI color? `Always`/`Never` are absolute;
 /// `Auto` colors only when stdout is a terminal.
 fn use_color(mode: ColorMode) -> bool {

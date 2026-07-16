@@ -9,7 +9,13 @@
 //! client, so there's no runtime to make `run` async against (a
 //! deliberate simplification of the issue's `async fn` sketch).
 
+use std::time::Instant;
+
+use crate::provider::{GenerateRequest, Provider};
 use crate::tui::ColorCap;
+
+/// Name used for the optional authenticated end-to-end probe.
+pub const SMOKE_CHECK_NAME: &str = "provider smoke completion";
 
 /// Outcome of a single check. Every variant carries a short message; a
 /// `fix_hint` is attached to actionable `Warn`/`Fail` results.
@@ -104,6 +110,50 @@ pub fn run_all(ctx: &CheckCtx) -> Vec<CheckResult> {
         clipboard_backend(ctx),
         learning_store_writable(ctx),
     ]
+}
+
+/// Issue the tiny authenticated completion used by `commet doctor --full`.
+/// A transport/provider error or an empty response is a hard failure; success
+/// includes wall-clock latency so the command is useful for diagnosing a slow
+/// endpoint as well as broken credentials.
+pub fn smoke(provider: &dyn Provider, model: &str) -> CheckResult {
+    let request = GenerateRequest {
+        system_prompt: "reply with the word OK".into(),
+        user_prompt: "hi".into(),
+        model: model.into(),
+        max_tokens: 4,
+        temperature: 0.0,
+        n: 1,
+    };
+    let started = Instant::now();
+    match provider.generate(&request) {
+        Ok(responses) if responses.iter().any(|response| !response.trim().is_empty()) => {
+            CheckResult::ok(
+                SMOKE_CHECK_NAME,
+                format!("responded in {} ms", started.elapsed().as_millis()),
+            )
+        }
+        Ok(_) => CheckResult::fail(
+            SMOKE_CHECK_NAME,
+            "provider returned an empty response",
+            "check the selected model and provider configuration",
+        ),
+        Err(err) => CheckResult::fail(
+            SMOKE_CHECK_NAME,
+            format!("completion failed: {err}"),
+            "check the API key, selected model, endpoint, and provider status",
+        ),
+    }
+}
+
+/// Result used when `--full` was requested but a prerequisite prevents the
+/// authenticated call from being attempted.
+pub fn smoke_skipped(reason: impl Into<String>) -> CheckResult {
+    CheckResult::warn(
+        SMOKE_CHECK_NAME,
+        format!("skipped: {}", reason.into()),
+        "fix the provider configuration, then rerun `commet doctor --full`",
+    )
 }
 
 fn git_available(ctx: &CheckCtx) -> CheckResult {
@@ -235,6 +285,11 @@ fn learning_store_writable(ctx: &CheckCtx) -> CheckResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::provider::{HttpClient, ProviderError};
+    use serde::{Deserialize, Serialize};
+    use std::time::Duration;
+    use wiremock::matchers::{body_partial_json, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     /// A fully-healthy context; tests mutate one field at a time.
     fn healthy() -> CheckCtx {
@@ -379,5 +434,92 @@ mod tests {
             status_of(&run_all(&ctx), "color support"),
             &Status::Ok("no color".into())
         );
+    }
+
+    #[derive(Serialize)]
+    struct WireRequest<'a> {
+        system: &'a str,
+        user: &'a str,
+        max_tokens: u32,
+    }
+
+    #[derive(Deserialize)]
+    struct WireResponse {
+        text: String,
+    }
+
+    struct WireProvider {
+        client: HttpClient,
+        endpoint: String,
+    }
+
+    impl Provider for WireProvider {
+        fn name(&self) -> &'static str {
+            "wire"
+        }
+
+        fn key_env_var(&self) -> Option<&'static str> {
+            Some("WIRE_TEST_KEY")
+        }
+
+        fn generate(&self, req: &GenerateRequest) -> Result<Vec<String>, ProviderError> {
+            let body = WireRequest {
+                system: &req.system_prompt,
+                user: &req.user_prompt,
+                max_tokens: req.max_tokens,
+            };
+            let response: WireResponse = self.client.post_json(&self.endpoint, &[], &body)?;
+            Ok(vec![response.text])
+        }
+    }
+
+    #[tokio::test]
+    async fn smoke_sends_canned_prompt_and_reports_latency() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/smoke"))
+            .and(body_partial_json(serde_json::json!({
+                "system": "reply with the word OK",
+                "user": "hi",
+                "max_tokens": 4
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "text": "OK"
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let endpoint = format!("{}/smoke", server.uri());
+        let result = tokio::task::spawn_blocking(move || {
+            let provider = WireProvider {
+                client: HttpClient::new(Duration::from_secs(2), 0),
+                endpoint,
+            };
+            smoke(&provider, "test-model")
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(result.name, SMOKE_CHECK_NAME);
+        assert!(matches!(result.status, Status::Ok(ref message) if message.contains(" ms")));
+    }
+
+    #[test]
+    fn smoke_rejects_an_empty_response() {
+        struct EmptyProvider;
+        impl Provider for EmptyProvider {
+            fn name(&self) -> &'static str {
+                "empty"
+            }
+            fn key_env_var(&self) -> Option<&'static str> {
+                None
+            }
+            fn generate(&self, _: &GenerateRequest) -> Result<Vec<String>, ProviderError> {
+                Ok(vec!["   ".into()])
+            }
+        }
+
+        assert!(smoke(&EmptyProvider, "test").is_fail());
     }
 }
