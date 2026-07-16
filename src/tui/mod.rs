@@ -7,12 +7,14 @@
 
 pub mod preview;
 pub mod run;
+pub mod setup;
 pub mod spinner;
 pub mod terminal;
 pub mod theme;
 
 pub use preview::{PreviewAction, PreviewState};
 pub use run::{Accepted, PreviewOutcome, run_preview};
+pub use setup::{SetupAction, SetupState, run_setup};
 pub use spinner::{Spinner, SpinnerMsg};
 pub use terminal::{App, AppScreen, Tui, enter, leave};
 pub use theme::{ColorCap, Theme};

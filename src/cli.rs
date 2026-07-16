@@ -11,6 +11,7 @@ use clap::{ArgGroup, Args, Parser, Subcommand, ValueEnum};
     propagate_version = true,
     after_help = "Environment:\n  \
         ANTHROPIC_API_KEY, OPENAI_API_KEY, OPENROUTER_API_KEY  read at runtime\n  \
+        COMMET_PROVIDER                                      setup --noninteractive provider\n  \
         COMMET_LOG=info,reqwest=warn                    log filter\n  \
         NO_COLOR=1                                             disable ANSI color"
 )]
@@ -133,7 +134,7 @@ pub struct SetupArgs {
     #[arg(long)]
     pub force: bool,
 
-    /// Skip the TUI wizard; write defaults non-interactively.
+    /// Skip the TUI wizard; use $COMMET_PROVIDER or Anthropic.
     #[arg(long = "noninteractive")]
     pub noninteractive: bool,
 }

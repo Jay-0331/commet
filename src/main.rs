@@ -3,7 +3,7 @@ use std::process::ExitCode;
 use clap::Parser;
 use commet::cli::{
     Cli, Command, ConfigCmd, ConfigEditArgs, ConfigShowArgs, DoctorArgs, ForgetArgs, HistoryArgs,
-    ProvidersArgs,
+    ProvidersArgs, SetupArgs,
 };
 use commet::cmd;
 use commet::config::{Layered, Loaded, discover, edit, render_json, render_toml};
@@ -32,10 +32,7 @@ fn run() -> Result<()> {
         Some(Command::Config(ConfigCmd::Show(args))) => cmd_config_show(&cli, args),
         Some(Command::Config(ConfigCmd::Edit(args))) => cmd_config_edit(args),
         None => cmd_generate(&cli),
-        Some(Command::Setup(_)) => {
-            info!("setup — not yet implemented");
-            Ok(())
-        }
+        Some(Command::Setup(args)) => cmd_setup(args),
         Some(Command::Init(_)) => {
             info!("init — not yet implemented");
             Ok(())
@@ -86,6 +83,12 @@ fn cmd_providers(args: &ProvidersArgs) -> Result<()> {
 fn cmd_doctor(args: &DoctorArgs) -> Result<()> {
     let cwd = std::env::current_dir()?;
     cmd::doctor::run(args, &cwd)
+}
+
+/// Bootstrap the global config, interactively or from defaults.
+fn cmd_setup(args: &SetupArgs) -> Result<()> {
+    let cwd = std::env::current_dir()?;
+    cmd::setup::run(args, &cwd)
 }
 
 /// Print recorded commit-message history, newest first.
