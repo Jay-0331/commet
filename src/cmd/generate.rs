@@ -1,18 +1,13 @@
-//! The default (no-subcommand) flow: generate a commit message from the
-//! staged diff and either print it or commit it.
+//! The default (no-subcommand) flow: select changed files, generate a
+//! commit message from the staged diff, then preview and commit it.
 //!
-//! Pipeline: read the staged diff → shrink it to the config byte cap
-//! (dropping `-x`/`[git].ignore_paths` globs) → build the prompt from
-//! `[style]` → call the configured provider → print candidates
-//! (`--print`, or the no-flag default) or commit the first one (`-y`).
-//!
-//! The interactive TUI preview (file picker / candidate picker) is a
-//! later milestone; until it lands, the no-flag default prints the
-//! message with a hint rather than committing, so nothing happens to
-//! the repo without `-y`.
+//! Interactive pipeline: file picker → stage the selection → shrink the
+//! diff to the config byte cap → call the provider → preview → commit.
+//! Explicit `--print` / `-y` invocations keep operating on the user's
+//! already-staged index so they remain script-friendly.
 
 use std::io::{IsTerminal, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::cli::{self, GenerateOpts};
@@ -38,6 +33,43 @@ pub fn run(config: &Config, opts: &GenerateOpts, cwd: &Path) -> Result<()> {
         return Err(Error::Config(
             "--all is not supported yet — stage changes with `git add` first".into(),
         ));
+    }
+
+    let interactive = !opts.print && !opts.yes && std::io::stdout().is_terminal();
+    let theme = if interactive {
+        let cap = crate::tui::color_cap(config.ui.color, opts.no_color);
+        Some(
+            crate::tui::Theme::from_config(&config.ui, cap)
+                .map_err(|error| Error::Config(error.to_string()))?,
+        )
+    } else {
+        None
+    };
+
+    // In the default terminal flow, the file picker is the first visible
+    // interaction. Keep its staging guard alive through provider generation
+    // and preview so every error/abort restores this session's additions.
+    let mut stage_tracker = None;
+    if interactive {
+        let entries = git::status_porcelain(cwd)?;
+        if entries.is_empty() {
+            return Err(Error::Git(
+                "working tree is clean — no files to select".into(),
+            ));
+        }
+        let state =
+            crate::tui::FilePickerState::from_status(cwd, entries, &config.git.ignore_paths)?;
+        let picked = crate::tui::run_file_picker(state, theme.expect("interactive theme"))?;
+        let crate::tui::FilePickerOutcome::Selected(paths) = picked else {
+            return Err(Error::UserAbort);
+        };
+
+        let already_staged = git::staged_paths(cwd)?;
+        let path_refs: Vec<&Path> = paths.iter().map(PathBuf::as_path).collect();
+        let mut tracker =
+            git::StageTracker::new(cwd.to_path_buf(), config.git.auto_unstage_on_abort);
+        tracker.stage_preserving(&path_refs, &already_staged)?;
+        stage_tracker = Some(tracker);
     }
 
     let provider_name = opts
@@ -69,7 +101,11 @@ pub fn run(config: &Config, opts: &GenerateOpts, cwd: &Path) -> Result<()> {
         ));
     }
 
-    let entries = git::status_porcelain(cwd)?;
+    let staged_paths = git::staged_paths(cwd)?;
+    let entries: Vec<_> = git::status_porcelain(cwd)?
+        .into_iter()
+        .filter(|entry| staged_paths.iter().any(|path| path == &entry.path))
+        .collect();
     let files: Vec<String> = entries
         .iter()
         .map(|e| e.path.display().to_string())
@@ -131,21 +167,25 @@ pub fn run(config: &Config, opts: &GenerateOpts, cwd: &Path) -> Result<()> {
 
     // No flag: interactive preview on a real terminal; otherwise (piped
     // output, CI) fall back to printing so scripting still works.
-    if std::io::stdout().is_terminal() {
+    if interactive {
         return interactive_preview(
-            config,
-            opts,
-            cwd,
-            provider.as_ref(),
-            &request,
             &candidates,
-            &Ctx {
-                provider: &provider_name,
-                model: &gen_opts.model,
-                temperature: gen_opts.temperature,
-                format: style.format,
-                files: &files,
-                diff: &shrunk,
+            PreviewSession {
+                config,
+                opts,
+                cwd,
+                provider: provider.as_ref(),
+                request: &request,
+                generation: Ctx {
+                    provider: &provider_name,
+                    model: &gen_opts.model,
+                    temperature: gen_opts.temperature,
+                    format: style.format,
+                    files: &files,
+                    diff: &shrunk,
+                },
+                theme: theme.expect("interactive theme"),
+                stage_tracker,
             },
         );
     }
@@ -168,21 +208,31 @@ struct Ctx<'a> {
     diff: &'a str,
 }
 
+/// Dependencies and owned staging guard for one preview session.
+struct PreviewSession<'a> {
+    config: &'a Config,
+    opts: &'a GenerateOpts,
+    cwd: &'a Path,
+    provider: &'a dyn crate::provider::Provider,
+    request: &'a crate::provider::GenerateRequest,
+    generation: Ctx<'a>,
+    theme: crate::tui::Theme,
+    stage_tracker: Option<git::StageTracker>,
+}
+
 /// Run the interactive preview: accept → commit + record, quit →
 /// user-abort, regenerate → re-query the provider, edit → `$EDITOR`.
-fn interactive_preview(
-    config: &Config,
-    opts: &GenerateOpts,
-    cwd: &Path,
-    provider: &dyn crate::provider::Provider,
-    request: &crate::provider::GenerateRequest,
-    candidates: &[String],
-    ctx: &Ctx,
-) -> Result<()> {
-    let cap = crate::tui::color_cap(config.ui.color, opts.no_color);
-    let theme = crate::tui::Theme::from_config(&config.ui, cap)
-        .map_err(|e| Error::Config(e.to_string()))?;
-
+fn interactive_preview(candidates: &[String], session: PreviewSession<'_>) -> Result<()> {
+    let PreviewSession {
+        config,
+        opts,
+        cwd,
+        provider,
+        request,
+        generation: ctx,
+        theme,
+        stage_tracker,
+    } = session;
     let state = crate::tui::PreviewState::new(
         candidates.to_vec(),
         ctx.provider,
@@ -201,6 +251,9 @@ fn interactive_preview(
     match outcome {
         crate::tui::PreviewOutcome::Accepted(acc) => {
             commit(cwd, &acc.message, opts.no_verify)?;
+            if let Some(tracker) = stage_tracker {
+                tracker.release();
+            }
             record_accepted(
                 config,
                 cwd,
@@ -216,7 +269,12 @@ fn interactive_preview(
             );
             Ok(())
         }
-        crate::tui::PreviewOutcome::Aborted => Err(Error::UserAbort),
+        crate::tui::PreviewOutcome::Aborted => {
+            if let Some(tracker) = stage_tracker {
+                tracker.abort()?;
+            }
+            Err(Error::UserAbort)
+        }
     }
 }
 

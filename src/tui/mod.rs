@@ -5,6 +5,7 @@
 //! restore) and the [`AppScreen`] state machine every screen renders
 //! through.
 
+pub mod files;
 pub mod preview;
 pub mod run;
 pub mod setup;
@@ -12,6 +13,7 @@ pub mod spinner;
 pub mod terminal;
 pub mod theme;
 
+pub use files::{FilePickerAction, FilePickerOutcome, FilePickerState, run_file_picker};
 pub use preview::{PreviewAction, PreviewState};
 pub use run::{Accepted, PreviewOutcome, run_preview};
 pub use setup::{SetupAction, SetupReport, SetupState, run_setup};

@@ -52,8 +52,20 @@ impl StageTracker {
     /// Stage `paths` via `git add --` and record them so they can
     /// be unstaged automatically if the session ends abnormally.
     pub fn stage(&mut self, paths: &[&Path]) -> Result<()> {
+        self.stage_preserving(paths, &[])
+    }
+
+    /// Stage every selected path, but only track paths that were not already
+    /// staged before this session. This keeps a picker abort from unstaging
+    /// index changes that belong to the user.
+    pub fn stage_preserving(&mut self, paths: &[&Path], already_staged: &[PathBuf]) -> Result<()> {
         wrappers::add(&self.cwd, paths)?;
-        self.tracked.extend(paths.iter().map(|p| p.to_path_buf()));
+        self.tracked.extend(
+            paths
+                .iter()
+                .filter(|path| !already_staged.iter().any(|staged| staged == **path))
+                .map(|path| path.to_path_buf()),
+        );
         Ok(())
     }
 
