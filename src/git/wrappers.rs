@@ -39,6 +39,30 @@ pub fn diff_staged(cwd: &Path) -> Result<String> {
     run(cwd, &[OsStr::new("diff"), OsStr::new("--cached")])
 }
 
+/// Paths that already have index changes before the picker stages its
+/// selection. The NUL-delimited form preserves spaces and other shell
+/// metacharacters without any quoting round-trip.
+pub fn staged_paths(cwd: &Path) -> Result<Vec<PathBuf>> {
+    let bytes = run_bytes(
+        cwd,
+        &[
+            OsStr::new("diff"),
+            OsStr::new("--cached"),
+            OsStr::new("--name-only"),
+            OsStr::new("-z"),
+        ],
+    )?;
+    bytes
+        .split(|byte| *byte == 0)
+        .filter(|path| !path.is_empty())
+        .map(|path| {
+            std::str::from_utf8(path)
+                .map(PathBuf::from)
+                .map_err(|error| Error::Git(format!("staged path is not utf-8: {error}")))
+        })
+        .collect()
+}
+
 /// Current branch name via `git rev-parse --abbrev-ref HEAD`. Returns
 /// `"HEAD"` on a detached head; errors before the first commit.
 pub fn current_branch(cwd: &Path) -> Result<String> {
@@ -67,20 +91,17 @@ pub fn add(cwd: &Path, paths: &[&Path]) -> Result<()> {
     run(cwd, &arg_refs).map(|_| ())
 }
 
-/// Unstage one or more paths via `git restore --staged -- <paths…>`.
+/// Unstage one or more paths via `git reset -- <paths…>`.
 ///
 /// Used by the TUI's auto-unstage-on-abort path so when the user
 /// quits without committing, the index is returned to whatever it
-/// was before `commet` started.
+/// was before `commet` started. The path-scoped `reset` form works both
+/// with a normal `HEAD` and on an unborn branch before the first commit.
 pub fn restore_staged(cwd: &Path, paths: &[&Path]) -> Result<()> {
     if paths.is_empty() {
         return Ok(());
     }
-    let mut args: Vec<OsString> = vec![
-        OsString::from("restore"),
-        OsString::from("--staged"),
-        OsString::from("--"),
-    ];
+    let mut args: Vec<OsString> = vec![OsString::from("reset"), OsString::from("--")];
     args.extend(paths.iter().map(|p| p.as_os_str().to_owned()));
     let arg_refs: Vec<&OsStr> = args.iter().map(OsString::as_os_str).collect();
     run(cwd, &arg_refs).map(|_| ())

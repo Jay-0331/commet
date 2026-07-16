@@ -178,6 +178,21 @@ fn restore_staged_unstages_what_add_staged() {
 }
 
 #[test]
+fn restore_staged_works_before_the_first_commit() {
+    let (_tmp, root) = make_repo();
+    write(&root, "first.txt", "first\n");
+    git::add(&root, &[Path::new("first.txt")]).unwrap();
+
+    git::restore_staged(&root, &[Path::new("first.txt")]).unwrap();
+
+    assert!(git::diff_staged(&root).unwrap().is_empty());
+    assert_eq!(
+        git::status_porcelain(&root).unwrap()[0].status,
+        FileStatus::Untracked
+    );
+}
+
+#[test]
 fn commit_creates_a_real_commit_with_the_message() {
     let (_tmp, root) = make_repo();
     make_initial_commit(&root);
@@ -246,6 +261,20 @@ fn diff_staged_of_clean_repo_is_empty() {
     let (_tmp, root) = make_repo();
     make_initial_commit(&root);
     assert!(git::diff_staged(&root).unwrap().is_empty());
+}
+
+#[test]
+fn staged_paths_reports_only_index_changes() {
+    let (_tmp, root) = make_repo();
+    make_initial_commit(&root);
+    write(&root, "staged file.rs", "// staged\n");
+    write(&root, "unstaged.rs", "// unstaged\n");
+    git::add(&root, &[Path::new("staged file.rs")]).unwrap();
+
+    assert_eq!(
+        git::staged_paths(&root).unwrap(),
+        vec![PathBuf::from("staged file.rs")]
+    );
 }
 
 // ---------- StageTracker (#25) ----------
@@ -390,4 +419,30 @@ fn stage_tracker_only_unstages_paths_it_staged() {
         !staged.contains("cc_added.rs"),
         "cc-staged path should be auto-unstaged: {staged}",
     );
+}
+
+#[test]
+fn stage_tracker_preserves_selected_paths_that_were_already_staged() {
+    use commet::git::StageTracker;
+
+    let (_tmp, root) = make_repo();
+    make_initial_commit(&root);
+    write(&root, "preexisting.rs", "// user staged\n");
+    git::add(&root, &[Path::new("preexisting.rs")]).unwrap();
+    write(&root, "picker.rs", "// picker staged\n");
+
+    let already_staged = git::staged_paths(&root).unwrap();
+    {
+        let mut tracker = StageTracker::new(root.clone(), true);
+        tracker
+            .stage_preserving(
+                &[Path::new("preexisting.rs"), Path::new("picker.rs")],
+                &already_staged,
+            )
+            .unwrap();
+    }
+
+    let staged = git::diff_staged(&root).unwrap();
+    assert!(staged.contains("preexisting.rs"));
+    assert!(!staged.contains("picker.rs"));
 }

@@ -24,4 +24,6 @@ pub use diff::{
 };
 pub use stage_tracker::StageTracker;
 pub use status::{FileEntry, FileStatus, parse_porcelain, status_porcelain};
-pub use wrappers::{add, commit, current_branch, diff_staged, repo_root, restore_staged, version};
+pub use wrappers::{
+    add, commit, current_branch, diff_staged, repo_root, restore_staged, staged_paths, version,
+};
