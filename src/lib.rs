@@ -1,4 +1,5 @@
 pub mod cli;
+pub mod clipboard;
 pub mod cmd;
 pub mod config;
 pub mod doctor;
