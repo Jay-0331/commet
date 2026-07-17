@@ -15,7 +15,8 @@ use tracing::{debug, info};
 fn main() -> ExitCode {
     log::init_stderr();
 
-    match run() {
+    let result = commet::clipboard::run_daemon_if_requested().unwrap_or_else(run);
+    match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
             eprintln!("error: {err}");

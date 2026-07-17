@@ -2,9 +2,10 @@
 //! commit message from the staged diff, then preview and commit it.
 //!
 //! Interactive pipeline: file picker → stage the selection → shrink the
-//! diff to the config byte cap → call the provider → preview → commit.
-//! Explicit `--print` / `-y` invocations keep operating on the user's
-//! already-staged index so they remain script-friendly.
+//! diff to the config byte cap → call the provider → preview → commit/copy.
+//! Explicit `--print`, `-c`, and `-y` invocations keep operating on the
+//! user's already-staged index when no terminal is attached so they remain
+//! script-friendly.
 
 use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
@@ -26,9 +27,6 @@ const DEFAULT_TEMPERATURE: f32 = 0.2;
 
 /// Run the default generate flow in `cwd`.
 pub fn run(config: &Config, opts: &GenerateOpts, cwd: &Path) -> Result<()> {
-    if opts.clipboard {
-        return Err(Error::Config("--clipboard/-c is not supported yet".into()));
-    }
     if opts.all {
         return Err(Error::Config(
             "--all is not supported yet — stage changes with `git add` first".into(),
@@ -165,6 +163,14 @@ pub fn run(config: &Config, opts: &GenerateOpts, cwd: &Path) -> Result<()> {
         return Ok(());
     }
 
+    // A piped/headless `-c` invocation cannot open the candidate picker, so
+    // copy candidate zero. On a real terminal `-c` continues below into the
+    // picker and copies whichever candidate the user accepts.
+    if opts.clipboard && !interactive {
+        copy_and_report(&candidates[0])?;
+        return Ok(());
+    }
+
     // No flag: interactive preview on a real terminal; otherwise (piped
     // output, CI) fall back to printing so scripting still works.
     if interactive {
@@ -220,8 +226,9 @@ struct PreviewSession<'a> {
     stage_tracker: Option<git::StageTracker>,
 }
 
-/// Run the interactive preview: accept → commit + record, quit →
-/// user-abort, regenerate → re-query the provider, edit → `$EDITOR`.
+/// Run the interactive preview: accept → commit + record (or clipboard +
+/// cleanup under `-c`), quit → user-abort, regenerate → re-query the
+/// provider, edit → `$EDITOR`.
 fn interactive_preview(candidates: &[String], session: PreviewSession<'_>) -> Result<()> {
     let PreviewSession {
         config,
@@ -264,6 +271,21 @@ fn interactive_preview(candidates: &[String], session: PreviewSession<'_>) -> Re
 
     match outcome {
         crate::tui::PreviewOutcome::Accepted(acc) => {
+            if opts.clipboard {
+                // Cleanup must run even if the clipboard backend fails. Preserve
+                // the copy error as the primary failure, matching the requested
+                // action, while still restoring picker-staged paths explicitly.
+                let copy_result = crate::clipboard::copy_for_exit(&acc.message);
+                let cleanup_result = match stage_tracker {
+                    Some(tracker) => tracker.abort(),
+                    None => Ok(()),
+                };
+                copy_result?;
+                cleanup_result?;
+                print_copied(&acc.message);
+                return Ok(());
+            }
+
             commit(cwd, &acc.message, opts.no_verify)?;
             if let Some(tracker) = stage_tracker {
                 tracker.release();
@@ -290,6 +312,17 @@ fn interactive_preview(candidates: &[String], session: PreviewSession<'_>) -> Re
             Err(Error::UserAbort)
         }
     }
+}
+
+fn copy_and_report(message: &str) -> Result<()> {
+    crate::clipboard::copy_for_exit(message)?;
+    print_copied(message);
+    Ok(())
+}
+
+fn print_copied(message: &str) {
+    let subject = message.lines().next().unwrap_or_default();
+    println!("Copied: {subject}");
 }
 
 /// Write `text` to a tempfile, open `$EDITOR` on it, and return the

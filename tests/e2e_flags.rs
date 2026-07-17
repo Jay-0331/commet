@@ -252,11 +252,52 @@ fn yes_records_the_accepted_commit_to_the_repo_store() {
     );
 }
 
+struct ClipboardRestore {
+    previous: Option<String>,
+}
+
+impl ClipboardRestore {
+    fn capture() -> Option<Self> {
+        let mut clipboard = arboard::Clipboard::new().ok()?;
+        Some(Self {
+            previous: clipboard.get_text().ok(),
+        })
+    }
+}
+
+impl Drop for ClipboardRestore {
+    fn drop(&mut self) {
+        let Ok(mut clipboard) = arboard::Clipboard::new() else {
+            return;
+        };
+        if let Some(previous) = self.previous.take() {
+            let _ = clipboard.set_text(previous);
+        } else {
+            let _ = clipboard.clear();
+        }
+    }
+}
+
 #[test]
-#[ignore = "clipboard (-c) is not implemented yet — see #55 (arboard)"]
-fn clipboard_copies_without_committing() {
+fn clipboard_with_multiple_candidates_copies_first_headlessly_without_committing() {
+    let Some(_restore) = ClipboardRestore::capture() else {
+        assert!(
+            std::env::var_os("CI").is_none(),
+            "CI must provide a clipboard display"
+        );
+        eprintln!("skipping clipboard assertion: no display is available");
+        return;
+    };
+
     let dir = repo();
     stage(dir.path(), "a.txt", "hello\n");
-    cc(dir.path(), "feat: copied").arg("-c").assert().success();
+    cc(dir.path(), "feat: copied\nfix: second\ndocs: third")
+        .args(["-c", "-g", "3"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Copied: feat: copied"));
+
+    let mut clipboard = arboard::Clipboard::new().expect("clipboard remains available");
+    assert_eq!(clipboard.get_text().unwrap(), "feat: copied");
     assert_eq!(head_subject(dir.path()), None);
 }
