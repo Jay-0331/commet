@@ -240,12 +240,26 @@ fn interactive_preview(candidates: &[String], session: PreviewSession<'_>) -> Re
         ctx.temperature,
         config.style.body_wrap as u16,
     );
+    // Lazily open the clipboard on the first `c` press and keep the
+    // connection alive for the rest of the TUI session. This is especially
+    // important for Linux selection ownership.
+    let mut clipboard = None;
 
     let outcome = crate::tui::run_preview(
         state,
         theme,
         || provider.generate(request).map_err(|e| e.to_string()),
         |text| edit_in_editor(text).map_err(|e| e.to_string()),
+        |text| {
+            if clipboard.is_none() {
+                clipboard = Some(crate::clipboard::Clipboard::new().map_err(|e| e.to_string())?);
+            }
+            clipboard
+                .as_mut()
+                .expect("clipboard initialized")
+                .set_text(text)
+                .map_err(|e| e.to_string())
+        },
     )?;
 
     match outcome {

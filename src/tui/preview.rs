@@ -3,19 +3,19 @@
 //!
 //! [`PreviewState`] holds the candidate list and selection; [`on_key`]
 //! maps a key press to a [`PreviewAction`] (or handles candidate
-//! navigation internally). [`render`] draws a header
-//! (`provider/model · temp · i/N`), the wrapped message, and a footer of
-//! key hints. The event loop that ties this to the terminal and the
-//! provider lives in [`super::run`].
+//! navigation internally). [`render`] draws a full-detail message and,
+//! in multi-candidate mode, a subject-only list of the other choices.
+//! The event loop that ties this to the terminal and provider lives in
+//! [`super::run`].
 //!
 //! [`on_key`]: PreviewState::on_key
 //! [`render`]: PreviewState::render
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::Style;
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Wrap};
 
 use ratatui::crossterm::event::KeyCode;
 
@@ -30,6 +30,8 @@ pub enum PreviewAction {
     Regenerate,
     /// Open the current candidate in `$EDITOR`.
     Edit,
+    /// Copy the current candidate to the OS clipboard.
+    Copy,
     /// Abandon without committing.
     Quit,
 }
@@ -42,6 +44,7 @@ pub struct PreviewState {
     model: String,
     temperature: f32,
     body_wrap: u16,
+    status: Option<String>,
 }
 
 impl PreviewState {
@@ -61,6 +64,7 @@ impl PreviewState {
             model: model.into(),
             temperature,
             body_wrap,
+            status: None,
         }
     }
 
@@ -82,6 +86,7 @@ impl PreviewState {
     /// Replace the current candidate's text (after an edit).
     pub fn set_current(&mut self, text: String) {
         self.candidates[self.index] = text;
+        self.status = None;
     }
 
     /// Replace all candidates (after a regenerate) and reset selection.
@@ -89,7 +94,13 @@ impl PreviewState {
         if !candidates.is_empty() {
             self.candidates = candidates;
             self.index = 0;
+            self.status = None;
         }
+    }
+
+    /// Show transient feedback in the top status bar.
+    pub fn set_status(&mut self, status: impl Into<String>) {
+        self.status = Some(status.into());
     }
 
     fn next(&mut self) {
@@ -101,18 +112,20 @@ impl PreviewState {
     }
 
     /// Map a key press to an action, handling candidate navigation
-    /// (`n`/`p`, arrows) internally and returning `None` for those.
+    /// (`j`/`k`, arrows) internally and returning `None` for those.
     pub fn on_key(&mut self, code: KeyCode) -> Option<PreviewAction> {
+        self.status = None;
         match code {
             KeyCode::Enter | KeyCode::Char('a') => Some(PreviewAction::Accept),
             KeyCode::Char('r') => Some(PreviewAction::Regenerate),
             KeyCode::Char('e') => Some(PreviewAction::Edit),
+            KeyCode::Char('c') => Some(PreviewAction::Copy),
             KeyCode::Char('q') | KeyCode::Esc => Some(PreviewAction::Quit),
-            KeyCode::Char('n') | KeyCode::Right | KeyCode::Down => {
+            KeyCode::Char('j') | KeyCode::Char('n') | KeyCode::Right | KeyCode::Down => {
                 self.next();
                 None
             }
-            KeyCode::Char('p') | KeyCode::Left | KeyCode::Up => {
+            KeyCode::Char('k') | KeyCode::Char('p') | KeyCode::Left | KeyCode::Up => {
                 self.prev();
                 None
             }
@@ -120,48 +133,78 @@ impl PreviewState {
         }
     }
 
-    /// Header line: `provider/model · temp N · candidate i/N`.
+    /// Status bar containing candidate position and provider/model.
     fn header(&self) -> String {
-        let mut s = format!(
-            "{}/{} · temp {:.1}",
-            self.provider, self.model, self.temperature
-        );
-        if self.candidates.len() > 1 {
-            s.push_str(&format!(
-                " · candidate {}/{}",
+        let mut header = if self.candidates.len() > 1 {
+            format!(
+                "{}/{} · {}/{} · temp {:.1}",
                 self.index + 1,
-                self.candidates.len()
-            ));
+                self.candidates.len(),
+                self.provider,
+                self.model,
+                self.temperature
+            )
+        } else {
+            format!(
+                "{}/{} · temp {:.1}",
+                self.provider, self.model, self.temperature
+            )
+        };
+        if let Some(status) = &self.status {
+            header.push_str(" · ");
+            header.push_str(status);
         }
-        s
+        header
     }
 
     /// Footer key hints; navigation is only shown with >1 candidate.
     fn footer(&self) -> String {
-        let mut s = String::from("[a]ccept  [r]egen  [e]dit  [q]uit");
         if self.candidates.len() > 1 {
-            s.push_str("  [n/p] candidate");
+            String::from("[j/k] choose  [a]ccept  [e]dit  [r]egen all  [c]opy  [q]uit")
+        } else {
+            String::from("[a]ccept  [r]egen  [e]dit  [c]opy  [q]uit")
         }
-        s
     }
 
     /// Draw the preview into `area`.
     pub fn render(&self, frame: &mut Frame, area: Rect, theme: &Theme) {
-        let rows = Layout::vertical([
-            Constraint::Length(1), // header
-            Constraint::Min(1),    // body
-            Constraint::Length(1), // footer
-        ])
-        .split(area);
+        if self.candidates.len() > 1 {
+            let other_height = self.candidates.len() as u16 + 1;
+            let rows = Layout::vertical([
+                Constraint::Length(1),
+                Constraint::Min(3),
+                Constraint::Length(other_height),
+                Constraint::Length(1),
+            ])
+            .split(area);
+            self.render_header(frame, rows[0], theme);
+            self.render_message(frame, rows[1], theme);
+            self.render_others(frame, rows[2], theme);
+            self.render_footer(frame, rows[3], theme);
+        } else {
+            let rows = Layout::vertical([
+                Constraint::Length(1),
+                Constraint::Min(1),
+                Constraint::Length(1),
+            ])
+            .split(area);
+            self.render_header(frame, rows[0], theme);
+            self.render_message(frame, rows[1], theme);
+            self.render_footer(frame, rows[2], theme);
+        }
+    }
 
+    fn render_header(&self, frame: &mut Frame, area: Rect, theme: &Theme) {
         frame.render_widget(
             Paragraph::new(self.header()).style(Style::default().fg(theme.muted)),
-            rows[0],
+            area,
         );
+    }
 
+    fn render_message(&self, frame: &mut Frame, area: Rect, theme: &Theme) {
         // Cap the message block at `body_wrap` columns so long lines wrap
         // where the config says, not just at the terminal edge.
-        let body_area = rows[1];
+        let body_area = area;
         let width = body_area.width.min(self.body_wrap.saturating_add(2)); // +2 for borders
         let body_area = Rect { width, ..body_area };
         let body = Paragraph::new(self.current())
@@ -174,13 +217,53 @@ impl PreviewState {
             .style(Style::default().fg(theme.fg))
             .wrap(Wrap { trim: false });
         frame.render_widget(body, body_area);
+    }
 
+    fn render_others(&self, frame: &mut Frame, area: Rect, theme: &Theme) {
+        let items = self
+            .candidates
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| *index != self.index)
+            .map(|(index, candidate)| {
+                ListItem::new(Line::from(vec![
+                    Span::styled(
+                        format!("{}. ", index + 1),
+                        Style::default()
+                            .fg(theme.accent)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(subject(candidate), Style::default().fg(theme.muted)),
+                ]))
+            });
+        frame.render_widget(
+            List::new(items).block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(theme.border))
+                    .title("other candidates"),
+            ),
+            area,
+        );
+    }
+
+    fn render_footer(&self, frame: &mut Frame, area: Rect, theme: &Theme) {
         let footer = Line::from(vec![Span::styled(
             self.footer(),
             Style::default().fg(theme.accent),
         )]);
-        frame.render_widget(Paragraph::new(footer), rows[2]);
+        frame.render_widget(Paragraph::new(footer), area);
     }
+}
+
+fn subject(candidate: &str) -> String {
+    candidate
+        .lines()
+        .next()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .unwrap_or("(empty subject)")
+        .to_string()
 }
 
 #[cfg(test)]
@@ -209,6 +292,7 @@ mod tests {
             Some(PreviewAction::Regenerate)
         );
         assert_eq!(s.on_key(KeyCode::Char('e')), Some(PreviewAction::Edit));
+        assert_eq!(s.on_key(KeyCode::Char('c')), Some(PreviewAction::Copy));
         assert_eq!(s.on_key(KeyCode::Char('q')), Some(PreviewAction::Quit));
         assert_eq!(s.on_key(KeyCode::Esc), Some(PreviewAction::Quit));
         assert_eq!(s.on_key(KeyCode::Char('z')), None);
@@ -218,14 +302,24 @@ mod tests {
     fn navigation_cycles_candidates() {
         let mut s = state(&["one", "two", "three"]);
         assert_eq!(s.current(), "one");
-        assert_eq!(s.on_key(KeyCode::Char('n')), None);
+        assert_eq!(s.on_key(KeyCode::Char('j')), None);
         assert_eq!(s.current(), "two");
         s.on_key(KeyCode::Right);
         assert_eq!(s.current(), "three");
-        s.on_key(KeyCode::Char('n')); // wraps
+        s.on_key(KeyCode::Char('j')); // wraps
         assert_eq!(s.current(), "one");
-        s.on_key(KeyCode::Char('p')); // wraps back
+        s.on_key(KeyCode::Char('k')); // wraps back
         assert_eq!(s.current(), "three");
+    }
+
+    #[test]
+    fn moving_then_accepting_chooses_the_current_candidate() {
+        let mut s = state(&["feat: first", "fix: chosen", "docs: third"]);
+        s.on_key(KeyCode::Char('j'));
+
+        assert_eq!(s.current(), "fix: chosen");
+        assert_eq!(s.index(), 1);
+        assert_eq!(s.on_key(KeyCode::Char('a')), Some(PreviewAction::Accept));
     }
 
     #[test]
@@ -260,12 +354,34 @@ mod tests {
     }
 
     #[test]
-    fn render_shows_candidate_index_when_multiple() {
+    fn render_multi_candidate_shows_detail_subjects_status_and_keys() {
         let single = render_to_string(&state(&["only"]));
-        assert!(!single.contains("candidate"));
+        assert!(!single.contains("other candidates"));
 
-        let multi = render_to_string(&state(&["one", "two"]));
-        assert!(multi.contains("candidate 1/2"));
-        assert!(multi.contains("[n/p]"));
+        let multi = render_to_string(&state(&[
+            "feat: current\n\nfull detail stays visible",
+            "fix: second\n\nsecond body is hidden",
+            "docs: third\n\nthird body is hidden",
+        ]));
+        assert!(multi.contains("1/3 · anthropic/claude-sonnet-4-6"));
+        assert!(multi.contains("feat: current"));
+        assert!(multi.contains("full detail stays visible"));
+        assert!(multi.contains("2. fix: second"));
+        assert!(multi.contains("3. docs: third"));
+        assert!(!multi.contains("second body is hidden"));
+        assert!(!multi.contains("third body is hidden"));
+        assert!(multi.contains("other candidates"));
+        assert!(multi.contains("[j/k] choose"));
+        assert!(multi.contains("[c]opy"));
+    }
+
+    #[test]
+    fn status_feedback_is_shown_then_cleared_by_the_next_key() {
+        let mut s = state(&["one", "two"]);
+        s.set_status("copied candidate 1");
+        assert!(s.header().contains("copied candidate 1"));
+
+        s.on_key(KeyCode::Char('j'));
+        assert!(!s.header().contains("copied"));
     }
 }
