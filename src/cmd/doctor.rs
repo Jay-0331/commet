@@ -90,9 +90,7 @@ pub fn collect(args: &DoctorArgs, cwd: &Path) -> DoctorReport {
                     .filter(|value| !value.is_empty())
             }),
         color: tui::color_cap(config.ui.color, false),
-        // Clipboard dispatch is not implemented yet, so reporting an
-        // available backend would promise functionality that does not exist.
-        clipboard_available: false,
+        clipboard_available: crate::clipboard::Clipboard::new().is_ok(),
         store_writable: !store.is_enabled() || paths_writable(&store.paths()),
     };
 

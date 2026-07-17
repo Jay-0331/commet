@@ -23,7 +23,7 @@ path = "src/lib.rs"
 mock = []
 
 [dependencies]
-arboard = { version = "3.6.1", default-features = false }
+arboard = { version = "3.6.1", default-features = false, features = ["wayland-data-control"] }
 clap = { version = "4", features = ["derive"] }
 globset = "0.4"
 httpdate = "1"
