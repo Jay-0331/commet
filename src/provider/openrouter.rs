@@ -109,14 +109,14 @@ mod tests {
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    fn req() -> GenerateRequest {
+    fn req(n: u8) -> GenerateRequest {
         GenerateRequest {
             system_prompt: "system instructions".into(),
             user_prompt: "diff text".into(),
             model: "anthropic/claude-sonnet-4".into(),
             max_tokens: 1024,
             temperature: 0.2,
-            n: 1,
+            n,
         }
     }
 
@@ -136,7 +136,7 @@ mod tests {
         mount_success(&server).await;
 
         let base_url = server.uri();
-        let request = req();
+        let request = req(1);
 
         let candidates = tokio::task::spawn_blocking(move || {
             let provider = OpenRouterProvider::with_config(base_url, "", "");
@@ -163,12 +163,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn generate_requests_three_candidates_in_one_call() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "choices": [
+                    {"message": {"role": "assistant", "content": "feat: first"}},
+                    {"message": {"role": "assistant", "content": "fix: second"}},
+                    {"message": {"role": "assistant", "content": "docs: third"}}
+                ]
+            })))
+            .mount(&server)
+            .await;
+
+        let base_url = server.uri();
+        let candidates = tokio::task::spawn_blocking(move || {
+            let provider = OpenRouterProvider::with_config(base_url, "", "");
+            provider.generate_with_key(&req(3), "test-key").unwrap()
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(candidates, ["feat: first", "fix: second", "docs: third"]);
+        let received = server.received_requests().await.unwrap();
+        assert_eq!(received.len(), 1, "OpenRouter should receive one request");
+        let body: serde_json::Value = serde_json::from_slice(&received[0].body).unwrap();
+        assert_eq!(body["n"], 3);
+    }
+
+    #[tokio::test]
     async fn generate_includes_http_referer_and_x_title_when_set() {
         let server = MockServer::start().await;
         mount_success(&server).await;
 
         let base_url = server.uri();
-        let request = req();
+        let request = req(1);
 
         tokio::task::spawn_blocking(move || {
             let provider =

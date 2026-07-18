@@ -89,14 +89,14 @@ mod tests {
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    fn req() -> GenerateRequest {
+    fn req(n: u8) -> GenerateRequest {
         GenerateRequest {
             system_prompt: "system instructions".into(),
             user_prompt: "diff text".into(),
             model: "gpt-4o-mini".into(),
             max_tokens: 1024,
             temperature: 0.2,
-            n: 1,
+            n,
         }
     }
 
@@ -112,7 +112,7 @@ mod tests {
             .await;
 
         let base_url = server.uri();
-        let request = req();
+        let request = req(1);
 
         let candidates = tokio::task::spawn_blocking(move || {
             let provider = OpenAiProvider::with_base_url(base_url);
@@ -144,6 +144,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn generate_requests_three_candidates_in_one_call() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "choices": [
+                    {"message": {"role": "assistant", "content": "feat: first"}},
+                    {"message": {"role": "assistant", "content": "fix: second"}},
+                    {"message": {"role": "assistant", "content": "docs: third"}}
+                ]
+            })))
+            .mount(&server)
+            .await;
+
+        let base_url = server.uri();
+        let candidates = tokio::task::spawn_blocking(move || {
+            let provider = OpenAiProvider::with_base_url(base_url);
+            provider.generate_with_key(&req(3), "test-key").unwrap()
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(candidates, ["feat: first", "fix: second", "docs: third"]);
+        let received = server.received_requests().await.unwrap();
+        assert_eq!(received.len(), 1, "OpenAI should receive one request");
+        let body: serde_json::Value = serde_json::from_slice(&received[0].body).unwrap();
+        assert_eq!(body["n"], 3);
+    }
+
+    #[tokio::test]
     async fn generate_propagates_provider_error_from_transport() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
@@ -153,7 +183,7 @@ mod tests {
             .await;
 
         let base_url = server.uri();
-        let request = req();
+        let request = req(1);
 
         let err = tokio::task::spawn_blocking(move || {
             let provider = OpenAiProvider::with_base_url(base_url);

@@ -120,17 +120,38 @@ fn yes_with_g2_commits_the_first_candidate() {
 }
 
 #[test]
-fn g3_print_shows_three_candidates() {
+fn generate_flag_reaches_provider_and_prints_three_candidates() {
     let dir = repo();
     stage(dir.path(), "a.txt", "hello\n");
+    let log = dir.path().join("req.json");
 
     cc(dir.path(), "one\ntwo\nthree")
         .args(["-g", "3", "--print"])
+        .env("COMMET_MOCK_LOG", &log)
         .assert()
         .success()
         .stdout(predicates::str::contains("candidate 1"))
         .stdout(predicates::str::contains("candidate 2"))
         .stdout(predicates::str::contains("candidate 3"));
+
+    assert_eq!(logged_request(&log)["n"], 3);
+}
+
+#[test]
+fn configured_generate_count_is_used_without_the_flag() {
+    let dir = repo();
+    stage(dir.path(), "a.txt", "hello\n");
+    let log = dir.path().join("req.json");
+
+    cc(dir.path(), "first\nsecond")
+        .args(["--set", "style.generate=2", "--print"])
+        .env("COMMET_MOCK_LOG", &log)
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("candidate 1"))
+        .stdout(predicates::str::contains("candidate 2"));
+
+    assert_eq!(logged_request(&log)["n"], 2);
 }
 
 #[test]

@@ -55,17 +55,22 @@ impl Provider for MockProvider {
             snippet: format!("${RESPONSE_ENV} is not set"),
         })?;
 
-        let candidates: Vec<String> = response
+        let mut candidates: Vec<String> = response
             .split('\n')
             .filter(|line| !line.is_empty())
             .map(str::to_string)
             .collect();
 
-        if candidates.is_empty() {
+        let requested = usize::from(req.n.max(1));
+        if candidates.len() < requested {
             return Err(ProviderError::BadResponse {
-                snippet: format!("${RESPONSE_ENV} produced no candidates"),
+                snippet: format!(
+                    "${RESPONSE_ENV} provided {} candidate(s), but {requested} requested",
+                    candidates.len()
+                ),
             });
         }
+        candidates.truncate(requested);
         Ok(candidates)
     }
 }
@@ -126,7 +131,10 @@ mod tests {
         // SAFETY: this is the only test that touches these vars, and it
         // sets, uses, and clears them within one thread.
         unsafe {
-            std::env::set_var(RESPONSE_ENV, "feat: a\nfix: b\nchore: c");
+            std::env::set_var(
+                RESPONSE_ENV,
+                "feat: a\nfix: b\nchore: c\ndocs: ignored extra",
+            );
             std::env::set_var(LOG_ENV, &log);
             std::env::set_var(DELAY_ENV, "20");
         }
@@ -143,6 +151,14 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&logged).unwrap();
         assert_eq!(parsed["system_prompt"], "sys");
         assert_eq!(parsed["n"], 3);
+
+        // The fixture must supply at least the requested count; this keeps
+        // end-to-end tests honest about whether `-g N` reached the provider.
+        unsafe {
+            std::env::set_var(RESPONSE_ENV, "feat: only one");
+        }
+        let err = MockProvider.generate(&request()).unwrap_err();
+        assert!(matches!(err, ProviderError::BadResponse { .. }));
 
         unsafe {
             std::env::remove_var(RESPONSE_ENV);
