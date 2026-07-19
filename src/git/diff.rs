@@ -187,6 +187,25 @@ fn drop_matching(chunks: Vec<DiffChunk>, globs: &GlobSet) -> (Vec<DiffChunk>, us
     (kept, dropped_files, dropped_bytes)
 }
 
+/// Return the status entries that are still visible to the model after
+/// applying `-x/--exclude` and `[git].ignore_paths`.
+///
+/// The diff pipeline strips matching chunks independently. Callers use this
+/// companion filter for prompt metadata such as the changed-file list and
+/// summary, so an excluded path does not leak back into the prompt even
+/// though it intentionally remains staged in git.
+pub fn filter_ignored_entries(
+    entries: &[FileEntry],
+    ignore_globs: &[String],
+) -> Result<Vec<FileEntry>> {
+    let globs = build_globs(ignore_globs)?;
+    Ok(entries
+        .iter()
+        .filter(|entry| !globs.is_match(&entry.path))
+        .cloned()
+        .collect())
+}
+
 /// Unconditionally strip diff chunks whose path matches one of
 /// `ignore_globs`, returning the joined remaining diff text.
 ///
@@ -564,6 +583,28 @@ mod tests {
         let last_idx = out.find("last.rs").expect("last present");
         assert!(first_idx < last_idx, "order not preserved");
         assert!(!out.contains("middle.lock"));
+    }
+
+    #[test]
+    fn filter_ignored_entries_removes_prompt_metadata_in_input_order() {
+        let entries = vec![
+            modified("src/main.rs"),
+            modified("Cargo.lock"),
+            modified("dist/app.js"),
+            modified("README.md"),
+        ];
+        let ignore = vec!["*.lock".to_string(), "dist/**".to_string()];
+
+        let kept = filter_ignored_entries(&entries, &ignore).unwrap();
+
+        assert_eq!(kept, vec![modified("src/main.rs"), modified("README.md")]);
+    }
+
+    #[test]
+    fn filter_ignored_entries_surfaces_invalid_globs() {
+        let err =
+            filter_ignored_entries(&[modified("a.rs")], &["[invalid".to_string()]).unwrap_err();
+        assert!(matches!(err, Error::Git(msg) if msg.contains("invalid ignore_paths glob")));
     }
 
     // ---------- merge_ignore_globs (#24) ----------
