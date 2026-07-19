@@ -69,6 +69,20 @@ fn head_subject(dir: &Path) -> Option<String> {
     }
 }
 
+fn staged_names(dir: &Path) -> Vec<String> {
+    let output = Command::new("git")
+        .current_dir(dir)
+        .args(["diff", "--cached", "--name-only"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "git diff --cached failed");
+    String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(str::to_string)
+        .collect()
+}
+
 /// Read the JSON request the mock recorded at `log`.
 fn logged_request(log: &Path) -> serde_json::Value {
     let raw = fs::read_to_string(log).unwrap();
@@ -194,14 +208,16 @@ fn prompt_flag_appends_user_override() {
 }
 
 #[test]
-fn exclude_drops_matching_paths_from_the_diff() {
+fn exclude_merges_cli_and_config_filters_without_unstaging() {
     let dir = repo();
     stage(dir.path(), "keep.txt", "keep me\n");
     stage(dir.path(), "secret.env", "TOKEN=drop me\n");
+    stage(dir.path(), "generated.rs", "generated cli exclusion\n");
+    stage(dir.path(), "Cargo.lock", "configured exclusion\n");
     let log = dir.path().join("req.json");
 
     cc(dir.path(), "chore: update")
-        .args(["-x", "*.env", "--print"])
+        .args(["-x", "*.env", "-x", "generated.*", "--print"])
         .env("COMMET_MOCK_LOG", &log)
         .assert()
         .success();
@@ -210,10 +226,32 @@ fn exclude_drops_matching_paths_from_the_diff() {
         .as_str()
         .unwrap()
         .to_string();
-    assert!(user.contains("keep.txt"), "kept file should be in the diff");
     assert!(
-        !user.contains("TOKEN=drop me"),
-        "excluded file's contents must not reach the prompt"
+        user.contains("keep.txt"),
+        "kept path should reach the prompt"
+    );
+    assert!(
+        user.contains("keep me"),
+        "kept diff should reach the prompt"
+    );
+    for excluded in [
+        "secret.env",
+        "TOKEN=drop me",
+        "generated.rs",
+        "generated cli exclusion",
+        "Cargo.lock",
+        "configured exclusion",
+    ] {
+        assert!(
+            !user.contains(excluded),
+            "excluded prompt data leaked: {excluded}\n{user}"
+        );
+    }
+
+    assert_eq!(
+        staged_names(dir.path()),
+        ["Cargo.lock", "generated.rs", "keep.txt", "secret.env"],
+        "exclude must not change the git index"
     );
 }
 

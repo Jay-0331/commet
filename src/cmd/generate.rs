@@ -104,13 +104,18 @@ pub fn run(config: &Config, opts: &GenerateOpts, cwd: &Path) -> Result<()> {
         .into_iter()
         .filter(|entry| staged_paths.iter().any(|path| path == &entry.path))
         .collect();
-    let files: Vec<String> = entries
-        .iter()
-        .map(|e| e.path.display().to_string())
-        .collect();
-
     let ignore = git::merge_ignore_globs(&opts.exclude, &config.git.ignore_paths);
-    let shrunk = git::truncate_diff(&diff, &entries, config.git.diff_max_bytes as usize, &ignore)?;
+    let prompt_entries = git::filter_ignored_entries(&entries, &ignore)?;
+    let files: Vec<String> = prompt_entries
+        .iter()
+        .map(|entry| entry.path.display().to_string())
+        .collect();
+    let shrunk = git::truncate_diff(
+        &diff,
+        &prompt_entries,
+        config.git.diff_max_bytes as usize,
+        &ignore,
+    )?;
 
     let (model_default, max_tokens, temperature) = provider_gen_params(config, &provider_name)?;
     let model = opts.model.clone().unwrap_or(model_default);
