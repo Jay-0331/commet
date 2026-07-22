@@ -306,12 +306,18 @@ mod tests {
     }
 
     #[test]
-    fn message_format_accepts_dotted_values() {
-        let cli = Cli::try_parse_from(["commet", "-t", "conventional+body"]).unwrap();
-        assert_eq!(cli.generate.format, Some(MessageFormat::ConventionalBody));
-
-        let cli = Cli::try_parse_from(["commet", "-t", "gitmoji"]).unwrap();
-        assert_eq!(cli.generate.format, Some(MessageFormat::Gitmoji));
+    fn message_format_accepts_every_documented_value() {
+        for (value, expected) in [
+            ("plain", MessageFormat::Plain),
+            ("conventional", MessageFormat::Conventional),
+            ("conventional+body", MessageFormat::ConventionalBody),
+            ("gitmoji", MessageFormat::Gitmoji),
+            ("subject+body", MessageFormat::SubjectBody),
+            ("custom", MessageFormat::Custom),
+        ] {
+            let cli = Cli::try_parse_from(["commet", "-t", value]).unwrap();
+            assert_eq!(cli.generate.format, Some(expected), "failed value {value}");
+        }
     }
 
     #[test]
