@@ -188,6 +188,49 @@ fn type_gitmoji_puts_the_rule_in_the_prompt() {
 }
 
 #[test]
+fn type_custom_uses_configured_prompt_and_template_for_one_run() {
+    let dir = repo();
+    stage(dir.path(), "a.txt", "hello\n");
+    let config = r#"
+[style]
+format = "plain"
+
+[style.custom]
+system_prompt = "CUSTOM RELEASE RULES"
+template = "<type>: <summary>\n\n<body>"
+"#;
+    fs::write(dir.path().join(".commet.toml"), config).unwrap();
+
+    let custom_log = dir.path().join("custom.json");
+    cc(dir.path(), "release: custom")
+        .args(["-t", "custom", "--print"])
+        .env("COMMET_MOCK_LOG", &custom_log)
+        .assert()
+        .success();
+
+    assert_eq!(
+        logged_request(&custom_log)["system_prompt"],
+        "CUSTOM RELEASE RULES\n\nOutput template (follow exactly):\n<type>: <summary>\n\n<body>"
+    );
+
+    let plain_log = dir.path().join("plain.json");
+    cc(dir.path(), "plain summary")
+        .arg("--print")
+        .env("COMMET_MOCK_LOG", &plain_log)
+        .assert()
+        .success();
+
+    let plain_request = logged_request(&plain_log);
+    let plain = plain_request["system_prompt"].as_str().unwrap();
+    assert!(plain.contains("single concise sentence"));
+    assert!(!plain.contains("CUSTOM RELEASE RULES"));
+    assert_eq!(
+        fs::read_to_string(dir.path().join(".commet.toml")).unwrap(),
+        config
+    );
+}
+
+#[test]
 fn prompt_flag_appends_user_override() {
     let dir = repo();
     stage(dir.path(), "a.txt", "hello\n");

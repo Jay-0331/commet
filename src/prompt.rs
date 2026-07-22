@@ -43,10 +43,12 @@ pub fn build(style: &Style, diff: &str, files: &[String], opts: &GenOpts) -> Gen
 /// examples, recent-commit examples (`learned`), output contract, and
 /// any user override.
 pub fn system_prompt(style: &Style, learned: &[String], extra: Option<&str>) -> String {
-    // Custom format hands the whole system prompt to the user (falling
-    // back to the plain rules if they left it empty).
-    if style.format == MessageFormat::Custom && !style.custom.system_prompt.trim().is_empty() {
-        let mut s = style.custom.system_prompt.trim().to_string();
+    // Custom format hands the prompt and optional output shape to the user.
+    // Fall back to the plain rules only when both custom fields are empty.
+    if style.format == MessageFormat::Custom
+        && let Some(custom) = custom_prompt(style)
+    {
+        let mut s = custom;
         append_learned(&mut s, learned);
         append_override(&mut s, extra);
         return s;
@@ -64,7 +66,15 @@ pub fn system_prompt(style: &Style, learned: &[String], extra: Option<&str>) -> 
         "\n\nKeep the subject line at or under {} characters.",
         style.subject_max_len
     ));
-    if style.include_body {
+    if matches!(
+        style.format,
+        MessageFormat::ConventionalBody | MessageFormat::SubjectBody
+    ) {
+        s.push_str(&format!(
+            " Wrap the required body at {} characters.",
+            style.body_wrap
+        ));
+    } else if style.include_body {
         s.push_str(&format!(
             " When a body adds useful context, add a blank line after the subject and wrap the \
              body at {} characters; omit the body for trivial changes.",
@@ -91,6 +101,25 @@ pub fn system_prompt(style: &Style, learned: &[String], extra: Option<&str>) -> 
 
     append_override(&mut s, extra);
     s
+}
+
+/// Render `[style.custom]` when either custom field is configured.
+fn custom_prompt(style: &Style) -> Option<String> {
+    let system = style.custom.system_prompt.trim();
+    let template = style.custom.template.trim();
+    if system.is_empty() && template.is_empty() {
+        return None;
+    }
+
+    let mut prompt = system.to_string();
+    if !template.is_empty() {
+        if !prompt.is_empty() {
+            prompt.push_str("\n\n");
+        }
+        prompt.push_str("Output template (follow exactly):\n");
+        prompt.push_str(template);
+    }
+    Some(prompt)
 }
 
 /// Append the recent-commits section, or nothing when the list is empty.
@@ -217,13 +246,25 @@ mod tests {
     }
 
     #[test]
-    fn custom_uses_the_configured_system_prompt() {
+    fn custom_uses_the_configured_system_prompt_and_template() {
         let mut s = style(MessageFormat::Custom);
         s.custom.system_prompt = "MY CUSTOM RULES".into();
+        s.custom.template = "<type>: <summary>".into();
         let sp = system_prompt(&s, &[], None);
         assert!(sp.starts_with("MY CUSTOM RULES"));
+        assert!(sp.contains("Output template (follow exactly):\n<type>: <summary>"));
         // The generic rules are not appended over a custom prompt.
         assert!(!sp.contains("Conventional Commits"));
+    }
+
+    #[test]
+    fn custom_template_works_without_a_custom_system_prompt() {
+        let mut s = style(MessageFormat::Custom);
+        s.custom.template = "[area] summary".into();
+        assert_eq!(
+            system_prompt(&s, &[], None),
+            "Output template (follow exactly):\n[area] summary"
+        );
     }
 
     #[test]
@@ -231,6 +272,83 @@ mod tests {
         let sp = system_prompt(&style(MessageFormat::Custom), &[], None);
         assert!(sp.contains("concise sentence"));
         assert!(sp.contains("Output ONLY"));
+    }
+
+    #[test]
+    fn body_formats_override_subject_only_config() {
+        for format in [MessageFormat::ConventionalBody, MessageFormat::SubjectBody] {
+            let mut s = style(format);
+            s.include_body = false;
+            let prompt = system_prompt(&s, &[], None);
+            assert!(prompt.contains("required body"));
+            assert!(!prompt.contains("no body"));
+        }
+    }
+
+    #[test]
+    fn rendered_system_prompt_snapshot_for_each_format() {
+        const ROLE: &str = "You are an expert software engineer writing a git commit message for the staged diff. Write in the imperative mood, present tense.";
+        const OUTPUT: &str = "Output ONLY the commit message text — no preamble, no explanation, no code fences, no surrounding quotes.";
+
+        let mut base = style(MessageFormat::Plain);
+        base.subject_max_len = 50;
+        base.body_wrap = 68;
+        base.include_body = false;
+        base.allowed_types = vec!["feat".into(), "fix".into()];
+        base.allowed_scopes = vec!["core".into()];
+        base.examples.clear();
+
+        let snapshots = [
+            (
+                MessageFormat::Plain,
+                format!(
+                    "{ROLE}\n\nWrite a single concise sentence summarizing the change.\n\nKeep the subject line at or under 50 characters. Output only the subject line — no body.\n\n{OUTPUT}"
+                ),
+            ),
+            (
+                MessageFormat::Conventional,
+                format!(
+                    "{ROLE}\n\nUse the Conventional Commits format: `type(scope): subject`. Allowed types: feat, fix. Prefer one of these scopes when applicable: core.\n\nKeep the subject line at or under 50 characters. Output only the subject line — no body.\n\n{OUTPUT}"
+                ),
+            ),
+            (
+                MessageFormat::ConventionalBody,
+                format!(
+                    "{ROLE}\n\nUse the Conventional Commits format: `type(scope): subject`. Allowed types: feat, fix. Prefer one of these scopes when applicable: core. Always include a body explaining what changed and why.\n\nKeep the subject line at or under 50 characters. Wrap the required body at 68 characters.\n\n{OUTPUT}"
+                ),
+            ),
+            (
+                MessageFormat::Gitmoji,
+                format!(
+                    "{ROLE}\n\nStart the subject with a single relevant gitmoji emoji, then a concise summary.\n\nKeep the subject line at or under 50 characters. Output only the subject line — no body.\n\n{OUTPUT}"
+                ),
+            ),
+            (
+                MessageFormat::SubjectBody,
+                format!(
+                    "{ROLE}\n\nWrite a concise subject line, then a blank line, then a body explaining what changed and why.\n\nKeep the subject line at or under 50 characters. Wrap the required body at 68 characters.\n\n{OUTPUT}"
+                ),
+            ),
+        ];
+
+        for (format, expected) in snapshots {
+            let mut configured = base.clone();
+            configured.format = format;
+            assert_eq!(
+                system_prompt(&configured, &[], None),
+                expected,
+                "snapshot changed for {format:?}"
+            );
+        }
+
+        let mut custom = base;
+        custom.format = MessageFormat::Custom;
+        custom.custom.system_prompt = "CUSTOM SYSTEM".into();
+        custom.custom.template = "<type>: <summary>\n\n<body>".into();
+        assert_eq!(
+            system_prompt(&custom, &[], None),
+            "CUSTOM SYSTEM\n\nOutput template (follow exactly):\n<type>: <summary>\n\n<body>"
+        );
     }
 
     #[test]
